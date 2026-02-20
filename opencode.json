@@ -3,7 +3,6 @@
   "provider": {
     "ollama": {
       "models": {
-        "ministral-3:8b-instruct-2512-q4_K_M": {},
         "medgemma:latest": {}
       }
     }
@@ -13,6 +12,7 @@
     "medsci-omics": {
       "type": "local",
       "command": ["/Users/omarhassan/.bun/bin/bun", "run", "packages/server-omics/src/index.ts"],
+      "timeout": 300000,
       "environment": {
         "MEDSCI_PROFILE": "standard",
         "MEDSCI_PYTHON": ".venv/bin/python3"
@@ -21,6 +21,7 @@
     "medsci-drug": {
       "type": "local",
       "command": ["/Users/omarhassan/.bun/bin/bun", "run", "packages/server-drug/src/index.ts"],
+      "timeout": 300000,
       "environment": {
         "MEDSCI_PROFILE": "standard",
         "MEDSCI_PYTHON": ".venv/bin/python3"
@@ -29,6 +30,7 @@
     "medsci-protein": {
       "type": "local",
       "command": ["/Users/omarhassan/.bun/bin/bun", "run", "packages/server-protein/src/index.ts"],
+      "timeout": 300000,
       "environment": {
         "MEDSCI_PROFILE": "standard",
         "MEDSCI_PYTHON": ".venv/bin/python3"
@@ -37,6 +39,7 @@
     "medsci-imaging": {
       "type": "local",
       "command": ["/Users/omarhassan/.bun/bin/bun", "run", "packages/server-imaging/src/index.ts"],
+      "timeout": 300000,
       "environment": {
         "MEDSCI_PROFILE": "standard",
         "MEDSCI_PYTHON": ".venv/bin/python3"
@@ -45,6 +48,7 @@
     "medsci-literature": {
       "type": "local",
       "command": ["/Users/omarhassan/.bun/bin/bun", "run", "packages/server-literature/src/index.ts"],
+      "timeout": 300000,
       "environment": {
         "MEDSCI_PROFILE": "standard",
         "MEDSCI_PYTHON": ".venv/bin/python3"
