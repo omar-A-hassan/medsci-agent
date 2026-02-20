@@ -1,0 +1,19 @@
+{
+  "name": "@medsci/core",
+  "version": "0.1.0",
+  "description": "Shared core: tool factory, model clients, Python sidecar, types, config",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "bun-types": "^1.1.0",
+    "typescript": "^5.7.0"
+  }
+}
