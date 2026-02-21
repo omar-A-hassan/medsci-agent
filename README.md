@@ -103,7 +103,7 @@ The **Python sidecar** is a long-running process that pre-imports scientific lib
 ### 1. Clone and install
 
 ```bash
-git clone <repo-url> medsci-agent
+git clone https://github.com/omar-A-hassan/medsci-agent.git
 cd medsci-agent
 bun install
 ```
