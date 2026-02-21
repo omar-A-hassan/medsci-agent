@@ -120,8 +120,18 @@ pip install rdkit-pypi biopython scanpy
 
 ```bash
 ollama pull medgemma:latest
-ollama run hf.co/matrixportalx/txgemma-2b-predict-GGUF:Q4_K_M
+ollama pull hf.co/matrixportalx/txgemma-2b-predict-GGUF:Q4_K_M
 ```
+
+Alternatively, pull MedGemma directly from HuggingFace (Unsloth's GGUF of [google/medgemma-4b-it](https://huggingface.co/google/medgemma-4b-it)):
+
+```bash
+ollama pull hf.co/unsloth/medgemma-4b-it-GGUF:Q4_K_M
+cp ~/.ollama/models/manifests/hf.co/unsloth/medgemma-4b-it-GGUF/Q4_K_M \
+   ~/.ollama/models/manifests/registry.ollama.ai/library/medgemma/latest
+```
+
+The second command aliases it so the code can reference it as `medgemma:latest`.
 
 ### 4. Configure OpenCode
 
