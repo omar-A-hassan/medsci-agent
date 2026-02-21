@@ -3,13 +3,18 @@ import { createMockContext } from "@medsci/core";
 import { analyzeMolecule } from "../tools/analyze-molecule";
 import { lipinskiFilter } from "../tools/lipinski-filter";
 import { similaritySearch } from "../tools/similarity-search";
-import { predictAdmet } from "../tools/predict-admet";
+import { predictAdmet, parseBinaryPrediction, TXGEMMA_MODEL } from "../tools/predict-admet";
 import { searchChembl } from "../tools/search-chembl";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });
+
+// Shared RDKit response for predict_admet tests
+const VALID_PROPS = {
+  valid: true, molecular_weight: 300, logp: 2.5, tpsa: 80, hbd: 2, hba: 5, rotatable_bonds: 4,
+};
 
 describe("analyze_molecule", () => {
   test("returns properties for valid SMILES", async () => {
@@ -99,39 +104,78 @@ describe("molecular_similarity", () => {
   });
 });
 
+describe("parseBinaryPrediction", () => {
+  test("parses (B) as positive", () => {
+    expect(parseBinaryPrediction("(B)", "B")).toBe(true);
+  });
+
+  test("parses (A) as negative", () => {
+    expect(parseBinaryPrediction("(A)", "B")).toBe(false);
+  });
+
+  test("parses bare letter B as positive", () => {
+    expect(parseBinaryPrediction("B", "B")).toBe(true);
+  });
+
+  test("handles lowercase", () => {
+    expect(parseBinaryPrediction("(b)", "B")).toBe(true);
+    expect(parseBinaryPrediction("a", "B")).toBe(false);
+  });
+
+  test("handles surrounding whitespace", () => {
+    expect(parseBinaryPrediction("  (B)  \n", "B")).toBe(true);
+  });
+
+  test("handles letter with trailing text", () => {
+    expect(parseBinaryPrediction("B crosses the BBB", "B")).toBe(true);
+    expect(parseBinaryPrediction("A does not", "B")).toBe(false);
+  });
+
+  test("returns null for empty string", () => {
+    expect(parseBinaryPrediction("", "B")).toBe(null);
+    expect(parseBinaryPrediction("   ", "B")).toBe(null);
+  });
+
+  test("returns null for unparseable output", () => {
+    expect(parseBinaryPrediction("I think yes", "B")).toBe(null);
+    expect(parseBinaryPrediction("maybe", "B")).toBe(null);
+  });
+});
+
 describe("predict_admet", () => {
-  test("returns ADMET predictions with model_used=true", async () => {
-    const ctx = createMockContext({
-      pythonResponse: { valid: true, molecular_weight: 300, logp: 2.5, tpsa: 80, hbd: 2, hba: 5, rotatable_bonds: 4 },
-      generateJsonResponse: {
-        absorption: "high",
-        bbb_penetration: "yes",
-        cyp_inhibition: ["CYP3A4"],
-        herg_risk: "low",
-        hepatotoxicity_risk: "low",
-        overall_druglikeness: 0.85,
-      },
+  test("returns TxGemma predictions with interpretation", async () => {
+    const ctx = createMockContext({ pythonResponse: VALID_PROPS });
+    (ctx.ollama.generate as any).mockImplementation((_prompt: string, opts: any) => {
+      if (opts?.model === TXGEMMA_MODEL) return Promise.resolve("(B)");
+      return Promise.resolve("Mock ADMET interpretation.");
     });
+
     const result = await predictAdmet.execute({ smiles: "CCO" }, ctx);
     expect(result.success).toBe(true);
-    expect(result.data?.admet.absorption).toBe("high");
     expect(result.data?.model_used).toBe(true);
+    expect(result.data?.admet.bbb_penetration).toBe("yes");
+    expect(result.data?.admet.herg_inhibition).toBe("blocker");
+    expect(result.data?.admet.ames_mutagenicity).toBe("mutagenic");
+    expect(result.data?.admet.dili_risk).toBe("yes");
+    expect(result.data?.interpretation).toBeDefined();
     expect(result.data?.physicochemical.molecular_weight).toBe(300);
   });
 
-  test("falls back to rule-based ADMET when MedGemma fails", async () => {
-    const ctx = createMockContext({
-      pythonResponse: { valid: true, molecular_weight: 300, logp: 2.5, tpsa: 80, hbd: 2, hba: 5, rotatable_bonds: 4 },
+  test("falls back to rule-based ADMET when TxGemma is unavailable", async () => {
+    const ctx = createMockContext({ pythonResponse: VALID_PROPS });
+    (ctx.ollama.generate as any).mockImplementation((_prompt: string, opts: any) => {
+      if (opts?.model === TXGEMMA_MODEL) throw new Error("model not found");
+      return Promise.resolve("Fallback interpretation.");
     });
-    (ctx.ollama.generateJson as any).mockImplementation(() => {
-      throw new Error("Ollama down");
-    });
+
     const result = await predictAdmet.execute({ smiles: "CCO" }, ctx);
     expect(result.success).toBe(true);
-    expect(result.data?.model_used).toBe(false);
-    // Rule-based fallback: TPSA=80 < 140 → absorption "high"
-    expect(result.data?.admet.absorption).toBe("high");
+    // TxGemma failed but MedGemma interpretation worked
+    expect(result.data?.model_used).toBe(true);
+    // Rule-based fallback: TPSA=80 < 140 → "likely" absorbed
+    expect(result.data?.admet.intestinal_absorption).toBe("likely");
     expect(result.data?.admet.note).toContain("Rule-based fallback");
+    expect(ctx.log.warn).toHaveBeenCalled();
   });
 
   test("returns error for invalid SMILES", async () => {
@@ -139,6 +183,44 @@ describe("predict_admet", () => {
     const result = await predictAdmet.execute({ smiles: "INVALID" }, ctx);
     expect(result.success).toBe(false);
     expect(result.error).toContain("Invalid SMILES");
+  });
+
+  test("passes TXGEMMA_MODEL in generate opts", async () => {
+    const ctx = createMockContext({ pythonResponse: VALID_PROPS });
+    const calledModels: string[] = [];
+    (ctx.ollama.generate as any).mockImplementation((_prompt: string, opts: any) => {
+      if (opts?.model) calledModels.push(opts.model);
+      return Promise.resolve("(A)");
+    });
+
+    await predictAdmet.execute({ smiles: "CCO" }, ctx);
+    // Should have called TxGemma for each of the 6 ADMET endpoints
+    const txgemmaCalls = calledModels.filter((m) => m === TXGEMMA_MODEL);
+    expect(txgemmaCalls.length).toBe(6);
+  });
+
+  test("handles partial TxGemma failure gracefully", async () => {
+    const ctx = createMockContext({ pythonResponse: VALID_PROPS });
+    let callCount = 0;
+    (ctx.ollama.generate as any).mockImplementation((_prompt: string, opts: any) => {
+      if (opts?.model === TXGEMMA_MODEL) {
+        callCount++;
+        // First 3 calls succeed, last 3 throw
+        if (callCount <= 3) return Promise.resolve("(A)");
+        throw new Error("timeout");
+      }
+      return Promise.resolve("Partial interpretation.");
+    });
+
+    const result = await predictAdmet.execute({ smiles: "CCO" }, ctx);
+    expect(result.success).toBe(true);
+    expect(result.data?.model_used).toBe(true);
+    // Some predictions should be present, some "unknown"
+    const admetValues = Object.values(result.data?.admet ?? {});
+    expect(admetValues).toContain("unknown");
+    // At least some predictions succeeded
+    const knownValues = admetValues.filter((v) => v !== "unknown");
+    expect(knownValues.length).toBeGreaterThan(0);
   });
 });
 
