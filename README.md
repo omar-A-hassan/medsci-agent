@@ -3,6 +3,7 @@
 [![MCP Server](https://badge.mcpx.dev?type=server&features=tools)](https://modelcontextprotocol.io)
 [![MedGemma](https://img.shields.io/badge/MedGemma-4B-4285F4?style=flat&logo=google&logoColor=white)](https://huggingface.co/google/medgemma-4b-it)
 [![TxGemma](https://img.shields.io/badge/TxGemma-2B--predict-4285F4?style=flat&logo=google&logoColor=white)](https://huggingface.co/google/txgemma-2b-predict)
+[![Ollama](https://img.shields.io/badge/Ollama-local%20inference-ffffff?style=flat&logo=ollama&logoColor=000000)](https://ollama.com)
 [![OpenCode](https://img.shields.io/badge/OpenCode-compatible-000000?style=flat)](https://opencode.ai)
 [![Bun](https://img.shields.io/badge/Bun-%3E%3D1.1-fbf0df?style=flat&logo=bun&logoColor=000000)](https://bun.sh)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat)](LICENSE)
