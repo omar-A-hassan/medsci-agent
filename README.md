@@ -143,7 +143,7 @@ bun test
 
 ### 6. Start
 
-Open the project directory in OpenCode. The MCP servers start automatically.
+Make sure Ollama is running, then open the project directory in OpenCode. The MCP servers start automatically.
 
 ## Configuration
 
