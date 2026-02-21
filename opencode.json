@@ -11,7 +11,7 @@
   "mcp": {
     "medsci-omics": {
       "type": "local",
-      "command": ["/Users/omarhassan/.bun/bin/bun", "run", "packages/server-omics/src/index.ts"],
+      "command": ["bun", "run", "packages/server-omics/src/index.ts"],
       "timeout": 300000,
       "environment": {
         "MEDSCI_PROFILE": "standard",
@@ -20,7 +20,7 @@
     },
     "medsci-drug": {
       "type": "local",
-      "command": ["/Users/omarhassan/.bun/bin/bun", "run", "packages/server-drug/src/index.ts"],
+      "command": ["bun", "run", "packages/server-drug/src/index.ts"],
       "timeout": 300000,
       "environment": {
         "MEDSCI_PROFILE": "standard",
@@ -29,7 +29,7 @@
     },
     "medsci-protein": {
       "type": "local",
-      "command": ["/Users/omarhassan/.bun/bin/bun", "run", "packages/server-protein/src/index.ts"],
+      "command": ["bun", "run", "packages/server-protein/src/index.ts"],
       "timeout": 300000,
       "environment": {
         "MEDSCI_PROFILE": "standard",
@@ -38,7 +38,7 @@
     },
     "medsci-imaging": {
       "type": "local",
-      "command": ["/Users/omarhassan/.bun/bin/bun", "run", "packages/server-imaging/src/index.ts"],
+      "command": ["bun", "run", "packages/server-imaging/src/index.ts"],
       "timeout": 300000,
       "environment": {
         "MEDSCI_PROFILE": "standard",
@@ -47,7 +47,7 @@
     },
     "medsci-literature": {
       "type": "local",
-      "command": ["/Users/omarhassan/.bun/bin/bun", "run", "packages/server-literature/src/index.ts"],
+      "command": ["bun", "run", "packages/server-literature/src/index.ts"],
       "timeout": 300000,
       "environment": {
         "MEDSCI_PROFILE": "standard",
