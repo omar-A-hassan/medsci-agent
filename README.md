@@ -10,7 +10,7 @@
 
 A biomedical research agent built as a collection of MCP servers for [OpenCode](https://opencode.ai). It provides 20 tools across drug discovery, protein analysis, literature search, medical imaging, and single-cell omics. Tools use [MedGemma](https://huggingface.co/google/medgemma-4b-it) and [TxGemma](https://huggingface.co/google/txgemma-2b-predict) running locally via Ollama for medical reasoning and drug property prediction.
 
-Built for the [MedGemma Impact Challenge](https://kaggle.com/competitions/medgemma-impact-challenge).
+Built for the [MedGemma Impact Challenge](https://www.kaggle.com/competitions/med-gemma-impact-challenge).
 
 ## Architecture
 
