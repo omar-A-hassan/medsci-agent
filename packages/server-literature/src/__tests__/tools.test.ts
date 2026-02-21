@@ -1,39 +1,14 @@
 import { test, expect, describe, mock, afterEach } from "bun:test";
-import type { ToolContext } from "@medsci/core";
+import { createMockContext } from "@medsci/core";
 import { fetchAbstract } from "../tools/fetch-abstract";
 import { searchClinicalTrials } from "../tools/search-clinical-trials";
 import { searchPubmed } from "../tools/search-pubmed";
+import { searchOpenAlex } from "../tools/search-openalex";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });
-
-function createMockContext(): ToolContext {
-  return {
-    ollama: {
-      generate: mock(() => Promise.resolve("Mock literature interpretation.")),
-      generateJson: mock(() => Promise.resolve({})),
-      embed: mock(() => Promise.resolve([])),
-      classify: mock(() =>
-        Promise.resolve({ label: "ok", score: 0.9, allScores: {} }),
-      ),
-      isAvailable: mock(() => Promise.resolve(true)),
-    },
-    python: {
-      call: mock(() => Promise.resolve({})),
-      isRunning: () => true,
-      start: mock(() => Promise.resolve()),
-      stop: mock(() => Promise.resolve()),
-    },
-    log: {
-      debug: mock(() => {}),
-      info: mock(() => {}),
-      warn: mock(() => {}),
-      error: mock(() => {}),
-    },
-  };
-}
 
 describe("fetch_abstract", () => {
   test("returns parsed abstract with interpretation", async () => {
@@ -176,5 +151,54 @@ describe("search_clinical_trials", () => {
     const result = await searchClinicalTrials.execute({ query: "test" }, ctx);
     expect(result.success).toBe(false);
     expect(result.error).toContain("429");
+  });
+});
+
+describe("search_openalex", () => {
+  test("returns scholarly works with interpretation", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            meta: { count: 1234 },
+            results: [
+              {
+                id: "W123",
+                title: "CRISPR advances in oncology",
+                authorships: [{ author: { display_name: "Jane Doe" } }],
+                publication_date: "2024-06-15",
+                primary_location: { source: { display_name: "Nature" } },
+                doi: "https://doi.org/10.1234/test",
+                cited_by_count: 42,
+                open_access: { is_oa: true },
+                concepts: [{ display_name: "CRISPR" }, { display_name: "Oncology" }],
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    ) as any;
+
+    const ctx = createMockContext();
+    const result = await searchOpenAlex.execute({ query: "CRISPR oncology" }, ctx);
+    expect(result.success).toBe(true);
+    expect(result.data?.n_results).toBe(1);
+    expect(result.data?.total_count).toBe(1234);
+    expect(result.data?.results[0].title).toBe("CRISPR advances in oncology");
+    expect(result.data?.results[0].cited_by_count).toBe(42);
+    expect(result.data?.interpretation).toBeDefined();
+    expect(result.data?.model_used).toBe(true);
+  });
+
+  test("returns error on OpenAlex API failure", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response("Service Unavailable", { status: 503 })),
+    ) as any;
+
+    const ctx = createMockContext();
+    const result = await searchOpenAlex.execute({ query: "test" }, ctx);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("503");
   });
 });

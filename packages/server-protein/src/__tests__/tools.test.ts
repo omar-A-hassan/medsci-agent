@@ -1,47 +1,24 @@
 import { test, expect, describe, mock, afterEach } from "bun:test";
-import type { ToolContext } from "@medsci/core";
+import { createMockContext } from "@medsci/core";
 import { sequenceAnalysis } from "../tools/sequence-analysis";
 import { searchUniprot } from "../tools/search-uniprot";
 import { searchPdb } from "../tools/search-pdb";
+import { predictStructure } from "../tools/predict-structure";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-function createMockContext(pythonResponse?: unknown): ToolContext {
-  return {
-    ollama: {
-      generate: mock(() => Promise.resolve("Mock protein interpretation.")),
-      generateJson: mock(() => Promise.resolve({})),
-      embed: mock(() => Promise.resolve([])),
-      classify: mock(() =>
-        Promise.resolve({ label: "ok", score: 0.9, allScores: {} }),
-      ),
-      isAvailable: mock(() => Promise.resolve(true)),
-    },
-    python: {
-      call: mock(() => Promise.resolve(pythonResponse ?? {})),
-      isRunning: () => true,
-      start: mock(() => Promise.resolve()),
-      stop: mock(() => Promise.resolve()),
-    },
-    log: {
-      debug: mock(() => {}),
-      info: mock(() => {}),
-      warn: mock(() => {}),
-      error: mock(() => {}),
-    },
-  };
-}
-
 describe("analyze_sequence", () => {
   test("returns sequence stats with interpretation", async () => {
     const ctx = createMockContext({
-      length: 150,
-      composition: { A: 10, G: 20 },
-      molecular_weight: 16500.5,
-      seq_type: "protein",
+      pythonResponse: {
+        length: 150,
+        composition: { A: 10, G: 20 },
+        molecular_weight: 16500.5,
+        seq_type: "protein",
+      },
     });
     const result = await sequenceAnalysis.execute(
       { sequence: "MKTLLILAVF" },
@@ -54,7 +31,9 @@ describe("analyze_sequence", () => {
   });
 
   test("calls biopython.sequence_stats with correct args", async () => {
-    const ctx = createMockContext({ length: 10, composition: {}, seq_type: "DNA" });
+    const ctx = createMockContext({
+      pythonResponse: { length: 10, composition: {}, seq_type: "DNA" },
+    });
     await sequenceAnalysis.execute(
       { sequence: "ATCGATCG", seq_type: "DNA" },
       ctx,
@@ -150,5 +129,52 @@ describe("search_pdb", () => {
     const result = await searchPdb.execute({ query: "hemoglobin" }, ctx);
     expect(result.success).toBe(false);
     expect(result.error).toContain("503");
+  });
+});
+
+describe("predict_structure", () => {
+  test("returns AlphaFold prediction with interpretation", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              entryId: "AF-P69905-F1",
+              gene: "HBA1",
+              organismScientificName: "Homo sapiens",
+              pdbUrl: "https://alphafold.ebi.ac.uk/files/AF-P69905-F1-model_v4.pdb",
+              cifUrl: "https://alphafold.ebi.ac.uk/files/AF-P69905-F1-model_v4.cif",
+              paeImageUrl: "https://alphafold.ebi.ac.uk/files/AF-P69905-F1-predicted_aligned_error_v4.png",
+              confidenceUrl: "https://alphafold.ebi.ac.uk/files/AF-P69905-F1-confidence_v4.json",
+              latestVersion: 4,
+              uniprotStart: 1,
+              uniprotEnd: 142,
+              globalMetricValue: 92.5,
+            },
+          ]),
+          { status: 200 },
+        ),
+      ),
+    ) as any;
+
+    const ctx = createMockContext();
+    const result = await predictStructure.execute({ uniprot_id: "P69905" }, ctx);
+    expect(result.success).toBe(true);
+    expect(result.data?.gene).toBe("HBA1");
+    expect(result.data?.mean_plddt).toBe(92.5);
+    expect(result.data?.sequence_length).toBe(142);
+    expect(result.data?.interpretation).toBeDefined();
+    expect(result.data?.model_used).toBe(true);
+  });
+
+  test("returns error when UniProt ID not found", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response("Not Found", { status: 404 })),
+    ) as any;
+
+    const ctx = createMockContext();
+    const result = await predictStructure.execute({ uniprot_id: "XXXXXX" }, ctx);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("No AlphaFold prediction");
   });
 });

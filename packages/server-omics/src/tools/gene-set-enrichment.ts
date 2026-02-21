@@ -12,15 +12,17 @@ export const geneSetEnrichment = defineTool({
   execute: async (input, ctx) => {
     // Enrichr API — no Python dependency needed, pure HTTP
     const library = input.gene_set_library ?? "GO_Biological_Process_2023";
+    const ENRICHR_BASE = "https://maayanlab.cloud/Enrichr";
 
     // Step 1: Submit gene list
-    const submitRes = await fetch("https://maayanlab.cloud/Enrichr/addList", {
+    const submitRes = await fetch(`${ENRICHR_BASE}/addList`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         list: input.genes.join("\n"),
         description: "MedSci agent query",
       }),
+      signal: AbortSignal.timeout(15_000),
     });
     if (!submitRes.ok) {
       return { success: false, error: `Enrichr submit failed: ${submitRes.status}` };
@@ -29,7 +31,8 @@ export const geneSetEnrichment = defineTool({
 
     // Step 2: Fetch enrichment results
     const resultRes = await fetch(
-      `https://maayanlab.cloud/Enrichr/enrich?userListId=${userListId}&backgroundType=${library}`,
+      `${ENRICHR_BASE}/enrich?userListId=${userListId}&backgroundType=${library}`,
+      { signal: AbortSignal.timeout(15_000) },
     );
     if (!resultRes.ok) {
       return { success: false, error: `Enrichr query failed: ${resultRes.status}` };
@@ -42,7 +45,7 @@ export const geneSetEnrichment = defineTool({
       p_value: Number(row[2]),
       adjusted_p_value: Number(row[6]),
       overlap: String(row[3]),
-      genes: (row[5] as string[]) ?? [],
+      genes: Array.isArray(row[5]) ? row[5].map(String) : [],
     }));
 
     const enrichmentData = {

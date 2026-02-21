@@ -1,5 +1,5 @@
 import { test, expect, describe, mock, afterEach } from "bun:test";
-import type { ToolContext } from "@medsci/core";
+import { createMockContext } from "@medsci/core";
 import { analyzeMedicalImage } from "../tools/analyze-medical-image";
 
 // We need to mock fs/promises for stat and readFile
@@ -12,39 +12,6 @@ mock.module("node:fs/promises", () => ({
   readFile: mockReadFile,
 }));
 
-function createMockContext(): ToolContext {
-  return {
-    ollama: {
-      generate: mock(() => Promise.resolve("Raw text findings.")),
-      generateJson: mock(() =>
-        Promise.resolve({
-          findings: ["Normal cardiac silhouette"],
-          impression: "No acute cardiopulmonary abnormality",
-          recommendations: ["No follow-up needed"],
-          disclaimer: "AI-assisted analysis.",
-        }),
-      ),
-      embed: mock(() => Promise.resolve([])),
-      classify: mock(() =>
-        Promise.resolve({ label: "ok", score: 0.9, allScores: {} }),
-      ),
-      isAvailable: mock(() => Promise.resolve(true)),
-    },
-    python: {
-      call: mock(() => Promise.resolve({})),
-      isRunning: () => true,
-      start: mock(() => Promise.resolve()),
-      stop: mock(() => Promise.resolve()),
-    },
-    log: {
-      debug: mock(() => {}),
-      info: mock(() => {}),
-      warn: mock(() => {}),
-      error: mock(() => {}),
-    },
-  };
-}
-
 describe("analyze_medical_image", () => {
   afterEach(() => {
     mockStat.mockReset();
@@ -54,7 +21,15 @@ describe("analyze_medical_image", () => {
   });
 
   test("returns analysis with model_used=true on success", async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({
+      generateResponse: "Raw text findings.",
+      generateJsonResponse: {
+        findings: ["Normal cardiac silhouette"],
+        impression: "No acute cardiopulmonary abnormality",
+        recommendations: ["No follow-up needed"],
+        disclaimer: "AI-assisted analysis.",
+      },
+    });
     const result = await analyzeMedicalImage.execute(
       { image_path: "/tmp/xray.png", modality: "chest_xray" },
       ctx,
@@ -66,7 +41,14 @@ describe("analyze_medical_image", () => {
   });
 
   test("passes images array to generateJson", async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({
+      generateJsonResponse: {
+        findings: ["Normal"],
+        impression: "Normal",
+        recommendations: [],
+        disclaimer: "AI-assisted.",
+      },
+    });
     await analyzeMedicalImage.execute(
       { image_path: "/tmp/xray.png", modality: "chest_xray" },
       ctx,
@@ -77,7 +59,14 @@ describe("analyze_medical_image", () => {
   });
 
   test("includes clinical context in prompt", async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({
+      generateJsonResponse: {
+        findings: ["Normal"],
+        impression: "Normal",
+        recommendations: [],
+        disclaimer: "AI-assisted.",
+      },
+    });
     await analyzeMedicalImage.execute(
       {
         image_path: "/tmp/xray.png",

@@ -21,11 +21,8 @@ export function createLogger(
     const ts = new Date().toISOString();
     const color = COLORS[level];
     const line = `${color}[${ts}] [${level.toUpperCase()}] [${prefix}]${RESET} ${msg}`;
-    if (level === "error") {
-      console.error(line, data !== undefined ? data : "");
-    } else {
-      console.log(line, data !== undefined ? data : "");
-    }
+    // All logs go to stderr — stdout is reserved for MCP stdio transport
+    console.error(line, data !== undefined ? data : "");
   }
 
   return {

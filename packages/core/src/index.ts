@@ -26,3 +26,6 @@ export type {
 } from "./types";
 
 export { PROFILES } from "./types";
+
+// Test utilities — only used by test files across packages
+export { createMockContext } from "./__tests__/test-helpers";

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineTool } from "@medsci/core";
+import { defineTool, interpretWithMedGemma } from "@medsci/core";
 
 const OPENALEX_BASE = "https://api.openalex.org";
 
@@ -53,14 +53,23 @@ export const searchOpenAlex = defineTool({
       concepts: work.concepts?.slice(0, 5)?.map((c: any) => c.display_name),
     }));
 
+    const openalexData = {
+      query: input.query,
+      total_count: json.meta?.count,
+      n_results: results.length,
+      results,
+    };
+
+    const { interpretation, model_used } = await interpretWithMedGemma(
+      ctx,
+      results.map((r: any) => ({ title: r.title, journal: r.journal, cited_by_count: r.cited_by_count })),
+      `Synthesize the research landscape for "${input.query}" from these scholarly works. ` +
+        "What are the dominant themes, highly-cited findings, and emerging trends?",
+    );
+
     return {
       success: true,
-      data: {
-        query: input.query,
-        total_count: json.meta?.count,
-        n_results: results.length,
-        results,
-      },
+      data: { ...openalexData, interpretation, model_used },
     };
   },
 });

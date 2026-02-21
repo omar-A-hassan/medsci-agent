@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineTool } from "@medsci/core";
+import { defineTool, interpretWithMedGemma } from "@medsci/core";
 
 const ALPHAFOLD_BASE = "https://alphafold.ebi.ac.uk/api";
 
@@ -33,21 +33,31 @@ export const predictStructure = defineTool({
     }
 
     const pred = predictions[0];
+    const structureData = {
+      uniprot_id: input.uniprot_id,
+      entry_id: pred.entryId,
+      gene: pred.gene,
+      organism: pred.organismScientificName,
+      model_url_pdb: pred.pdbUrl,
+      model_url_cif: pred.cifUrl,
+      pae_image_url: pred.paeImageUrl,
+      confidence_url: pred.confidenceUrl,
+      model_version: pred.latestVersion,
+      sequence_length: pred.uniprotEnd - pred.uniprotStart + 1,
+      mean_plddt: pred.globalMetricValue,
+    };
+
+    const { interpretation, model_used } = await interpretWithMedGemma(
+      ctx,
+      { gene: structureData.gene, organism: structureData.organism, mean_plddt: structureData.mean_plddt, sequence_length: structureData.sequence_length },
+      `Assess this AlphaFold structure prediction for ${input.uniprot_id}. ` +
+        "Comment on pLDDT confidence quality, suitability for structure-based drug design, " +
+        "and any caveats about predicted vs. experimental structures.",
+    );
+
     return {
       success: true,
-      data: {
-        uniprot_id: input.uniprot_id,
-        entry_id: pred.entryId,
-        gene: pred.gene,
-        organism: pred.organismScientificName,
-        model_url_pdb: pred.pdbUrl,
-        model_url_cif: pred.cifUrl,
-        pae_image_url: pred.paeImageUrl,
-        confidence_url: pred.confidenceUrl,
-        model_version: pred.latestVersion,
-        sequence_length: pred.uniprotEnd - pred.uniprotStart + 1,
-        mean_plddt: pred.globalMetricValue,
-      },
+      data: { ...structureData, interpretation, model_used },
     };
   },
 });

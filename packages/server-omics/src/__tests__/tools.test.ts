@@ -1,5 +1,5 @@
 import { test, expect, describe, mock, afterEach } from "bun:test";
-import type { ToolContext } from "@medsci/core";
+import { createMockContext } from "@medsci/core";
 import { differentialExpression } from "../tools/differential-expression";
 import { geneSetEnrichment } from "../tools/gene-set-enrichment";
 
@@ -7,32 +7,6 @@ const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });
-
-function createMockContext(pythonResponse?: unknown): ToolContext {
-  return {
-    ollama: {
-      generate: mock(() => Promise.resolve("Mock interpretation of omics data.")),
-      generateJson: mock(() => Promise.resolve({})),
-      embed: mock(() => Promise.resolve([])),
-      classify: mock(() =>
-        Promise.resolve({ label: "ok", score: 0.9, allScores: {} }),
-      ),
-      isAvailable: mock(() => Promise.resolve(true)),
-    },
-    python: {
-      call: mock(() => Promise.resolve(pythonResponse ?? {})),
-      isRunning: () => true,
-      start: mock(() => Promise.resolve()),
-      stop: mock(() => Promise.resolve()),
-    },
-    log: {
-      debug: mock(() => {}),
-      info: mock(() => {}),
-      warn: mock(() => {}),
-      error: mock(() => {}),
-    },
-  };
-}
 
 describe("differential_expression", () => {
   test("returns DE results with interpretation", async () => {
@@ -43,7 +17,7 @@ describe("differential_expression", () => {
         cluster1: [{ gene: "MS4A1", logfoldchange: 1.8, pval_adj: 0.01 }],
       },
     };
-    const ctx = createMockContext(deData);
+    const ctx = createMockContext({ pythonResponse: deData });
     const result = await differentialExpression.execute(
       { path: "test.h5ad", groupby: "leiden" },
       ctx,
@@ -55,7 +29,7 @@ describe("differential_expression", () => {
   });
 
   test("calls python sidecar with correct args", async () => {
-    const ctx = createMockContext({ groups: [], top_genes: {} });
+    const ctx = createMockContext({ pythonResponse: { groups: [], top_genes: {} } });
     await differentialExpression.execute(
       { path: "data.h5ad", groupby: "condition", method: "t-test", n_genes: 25 },
       ctx,
@@ -69,7 +43,7 @@ describe("differential_expression", () => {
   });
 
   test("still succeeds when MedGemma fails", async () => {
-    const ctx = createMockContext({ groups: ["a"], top_genes: {} });
+    const ctx = createMockContext({ pythonResponse: { groups: ["a"], top_genes: {} } });
     (ctx.ollama.generate as any).mockImplementation(() => {
       throw new Error("Ollama down");
     });
@@ -85,8 +59,7 @@ describe("differential_expression", () => {
 
 describe("gene_set_enrichment", () => {
   test("returns enrichment results with interpretation", async () => {
-    // Mock Enrichr API calls
-    globalThis.fetch = mock((url: string, opts?: any) => {
+    globalThis.fetch = mock((url: string) => {
       if (typeof url === "string" && url.includes("addList")) {
         return Promise.resolve(
           new Response(JSON.stringify({ userListId: 123 }), { status: 200 }),
