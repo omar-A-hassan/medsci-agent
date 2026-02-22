@@ -7,7 +7,7 @@
 [![OpenCode](https://img.shields.io/badge/OpenCode-compatible-000000?style=flat)](https://opencode.ai)
 [![Bun](https://img.shields.io/badge/Bun-%3E%3D1.1-fbf0df?style=flat&logo=bun&logoColor=000000)](https://bun.sh)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-103%20passing-brightgreen?style=flat)]()
+[![Tests](https://img.shields.io/badge/tests-107%20passing-brightgreen?style=flat)]()
 
 A biomedical research agent built as a collection of MCP servers for [OpenCode](https://opencode.ai). It provides 20 tools across drug discovery, protein analysis, literature search, medical imaging, and single-cell omics. Tools use [MedGemma](https://huggingface.co/google/medgemma-4b-it) and [TxGemma](https://huggingface.co/google/txgemma-2b-predict) running locally via Ollama for medical reasoning and drug property prediction.
 
@@ -114,7 +114,9 @@ bun install
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install rdkit-pypi biopython scanpy
+
+# Core dependencies (required)
+pip install rdkit-pypi biopython scanpy leidenalg igraph pynndescent
 ```
 
 ### 3. Pull Ollama models
@@ -174,7 +176,7 @@ The `MEDSCI_PROFILE` setting controls which Python libraries are pre-imported wh
 | Profile | Pre-imported | Use case |
 |---------|--------------|----------|
 | `lite` | RDKit | Drug discovery tools only, lower memory usage |
-| `standard` | RDKit, Scanpy, BioPython | Most workflows |
+| `standard` | RDKit, Scanpy, BioPython, leidenalg, igraph, pynndescent | Most workflows |
 | `full` | All available | Fastest first-call latency across all tools |
 
 ## Project Structure

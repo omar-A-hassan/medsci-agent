@@ -15,13 +15,13 @@ export const geneSetEnrichment = defineTool({
     const ENRICHR_BASE = "https://maayanlab.cloud/Enrichr";
 
     // Step 1: Submit gene list
+    const formData = new FormData();
+    formData.append("list", input.genes.join("\n"));
+    formData.append("description", "MedSci agent query");
+
     const submitRes = await fetch(`${ENRICHR_BASE}/addList`, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        list: input.genes.join("\n"),
-        description: "MedSci agent query",
-      }),
+      body: formData,
       signal: AbortSignal.timeout(15_000),
     });
     if (!submitRes.ok) {
@@ -59,7 +59,7 @@ export const geneSetEnrichment = defineTool({
       ctx,
       results.slice(0, 10),
       `Summarize what these enriched ${library} terms tell us about the underlying biology. ` +
-        "What are the key pathways and processes? Any clinical or therapeutic implications?",
+      "What are the key pathways and processes? Any clinical or therapeutic implications?",
     );
 
     return {

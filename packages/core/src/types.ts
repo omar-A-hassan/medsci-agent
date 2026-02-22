@@ -20,7 +20,7 @@ export const PROFILES: Record<HardwareProfile, ProfileConfig> = {
   },
   standard: {
     reasoningModel: "medgemma:latest",
-    pythonPreload: ["rdkit", "scanpy", "biopython"],
+    pythonPreload: ["rdkit", "scanpy", "biopython", "leidenalg", "igraph", "pynndescent"],
   },
   full: {
     reasoningModel: "medgemma:latest",

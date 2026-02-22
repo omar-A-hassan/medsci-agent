@@ -104,39 +104,51 @@ export class PythonSidecar implements PythonSidecarInterface {
     method: string,
     args: Record<string, unknown>,
   ): Promise<T> {
-    if (!this.isRunning() && method !== "__health__") {
-      await this.start();
-    }
-    if (!this.proc?.stdin) {
-      throw new Error("Sidecar stdin not available");
-    }
+    const attemptCall = async (isRetry = false): Promise<T> => {
+      if (!this.isRunning() && method !== "__health__") {
+        await this.start();
+      }
+      if (!this.proc?.stdin) {
+        throw new Error("Sidecar stdin not available");
+      }
 
-    const id = randomUUID();
-    const request: SidecarRequest = { id, method, args };
+      const id = randomUUID();
+      const request: SidecarRequest = { id, method, args };
 
-    return new Promise<T>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id);
-        reject(
-          new Error(
-            `Sidecar call ${method} timed out after ${this.timeoutMs}ms`,
-          ),
-        );
-      }, method === "__health__" ? HEALTH_CHECK_TIMEOUT_MS : this.timeoutMs);
+      return new Promise<T>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          this.pending.delete(id);
+          reject(
+            new Error(
+              `Sidecar call ${method} timed out after ${this.timeoutMs}ms`,
+            ),
+          );
+        }, method === "__health__" ? HEALTH_CHECK_TIMEOUT_MS : this.timeoutMs);
 
-      this.pending.set(id, {
-        resolve: (v) => {
-          clearTimeout(timeout);
-          resolve(v as T);
-        },
-        reject: (e) => {
-          clearTimeout(timeout);
-          reject(e);
-        },
+        this.pending.set(id, {
+          resolve: (v) => {
+            clearTimeout(timeout);
+            resolve(v as T);
+          },
+          reject: (e) => {
+            clearTimeout(timeout);
+            reject(e);
+          },
+        });
+
+        this.proc!.stdin!.write(JSON.stringify(request) + "\n");
       });
+    };
 
-      this.proc!.stdin!.write(JSON.stringify(request) + "\n");
-    });
+    try {
+      return await attemptCall();
+    } catch (err) {
+      if (!this.isRunning() && method !== "__health__") {
+        this.log.warn(`Sidecar crashed during ${method}. Retrying once...`);
+        return await attemptCall(true);
+      }
+      throw err;
+    }
   }
 
   async stop(): Promise<void> {

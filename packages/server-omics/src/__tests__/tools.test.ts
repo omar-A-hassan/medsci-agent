@@ -8,6 +8,48 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
+import { preprocess } from "../tools/preprocess";
+import { cluster } from "../tools/cluster";
+
+describe("preprocess", () => {
+  test("calls python sidecar with output_path", async () => {
+    const ctx = createMockContext({
+      pythonResponse: { n_obs_after: 100, n_vars_after: 200, n_highly_variable: 50, output_path: "tmp_pre.h5ad" },
+    });
+    const result = await preprocess.execute(
+      { path: "raw.h5ad", output_path: "tmp_pre.h5ad", min_genes: 10 },
+      ctx,
+    );
+    expect(result.success).toBe(true);
+    expect(ctx.python.call).toHaveBeenCalledWith("scanpy.preprocess", {
+      path: "raw.h5ad",
+      output_path: "tmp_pre.h5ad",
+      min_genes: 10,
+      min_cells: 3,
+      n_top_genes: 2000,
+    });
+  });
+});
+
+describe("cluster", () => {
+  test("calls python sidecar with output_path", async () => {
+    const ctx = createMockContext({
+      pythonResponse: { method: "leiden", n_clusters: 5, cluster_sizes: {}, output_path: "tmp_clus.h5ad" },
+    });
+    const result = await cluster.execute(
+      { path: "pre.h5ad", output_path: "tmp_clus.h5ad", resolution: 0.8 },
+      ctx,
+    );
+    expect(result.success).toBe(true);
+    expect(ctx.python.call).toHaveBeenCalledWith("scanpy.cluster", {
+      path: "pre.h5ad",
+      output_path: "tmp_clus.h5ad",
+      resolution: 0.8,
+      method: "leiden",
+    });
+  });
+});
+
 describe("differential_expression", () => {
   test("returns DE results with interpretation", async () => {
     const deData = {

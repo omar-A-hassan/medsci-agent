@@ -85,7 +85,7 @@ def scanpy_read_h5ad(path: str, **_: Any) -> dict:
 
 
 @handler("scanpy.preprocess")
-def scanpy_preprocess(path: str, min_genes: int = 200, min_cells: int = 3,
+def scanpy_preprocess(path: str, output_path: str, min_genes: int = 200, min_cells: int = 3,
                       n_top_genes: int = 2000, **_: Any) -> dict:
     import scanpy as sc
     _check_file_size(path)
@@ -97,15 +97,17 @@ def scanpy_preprocess(path: str, min_genes: int = 200, min_cells: int = 3,
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
     sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes)
+    adata.write_h5ad(output_path)
     return {
         "n_obs_after": adata.n_obs,
         "n_vars_after": adata.n_vars,
         "n_highly_variable": int(adata.var["highly_variable"].sum()),
+        "output_path": output_path,
     }
 
 
 @handler("scanpy.cluster")
-def scanpy_cluster(path: str, resolution: float = 1.0,
+def scanpy_cluster(path: str, output_path: str, resolution: float = 1.0,
                    method: str = "leiden", **_: Any) -> dict:
     import scanpy as sc
     _check_file_size(path)
@@ -117,10 +119,12 @@ def scanpy_cluster(path: str, resolution: float = 1.0,
     else:
         sc.tl.louvain(adata, resolution=resolution)
     clusters = adata.obs[method].value_counts().to_dict()
+    adata.write_h5ad(output_path)
     return {
         "method": method,
         "n_clusters": len(clusters),
         "cluster_sizes": {str(k): int(v) for k, v in clusters.items()},
+        "output_path": output_path,
     }
 
 
@@ -285,78 +289,7 @@ def biopython_translate(sequence: str, **_: Any) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# PyDESeq2 handlers
-# ---------------------------------------------------------------------------
 
-@handler("pydeseq2.run")
-def pydeseq2_run(counts_path: str, metadata_path: str, design_factor: str,
-                 **_: Any) -> dict:
-    _check_file_size(counts_path)
-    _check_file_size(metadata_path)
-    import pandas as pd
-    from pydeseq2.dds import DeseqDataSet
-    from pydeseq2.ds import DeseqStats
-    counts = pd.read_csv(counts_path, index_col=0)
-    metadata = pd.read_csv(metadata_path, index_col=0)
-    dds = DeseqDataSet(counts=counts, metadata=metadata,
-                       design_factors=design_factor)
-    dds.deseq2()
-    stat_res = DeseqStats(dds)
-    stat_res.summary()
-    results = stat_res.results_df
-    sig = results[results["padj"] < 0.05].sort_values("log2FoldChange", ascending=False)
-    return {
-        "n_genes_tested": len(results),
-        "n_significant": len(sig),
-        "top_upregulated": sig.head(20).reset_index().to_dict(orient="records"),
-        "top_downregulated": sig.tail(20).reset_index().to_dict(orient="records"),
-    }
-
-
-# ---------------------------------------------------------------------------
-# DeepChem handlers
-# ---------------------------------------------------------------------------
-
-@handler("deepchem.featurize")
-def deepchem_featurize(smiles_list: list, featurizer: str = "ECFP", **_: Any) -> dict:
-    import deepchem as dc
-    if featurizer == "ECFP":
-        feat = dc.feat.CircularFingerprint(size=2048)
-    elif featurizer == "GraphConv":
-        feat = dc.feat.ConvMolFeaturizer()
-    else:
-        return {"error": f"Unknown featurizer: {featurizer}"}
-    features = feat.featurize(smiles_list)
-    return {
-        "n_molecules": len(smiles_list),
-        "featurizer": featurizer,
-        "feature_shape": list(features.shape) if hasattr(features, "shape") else len(features),
-    }
-
-
-# ---------------------------------------------------------------------------
-# ESM (protein language model) handlers
-# ---------------------------------------------------------------------------
-
-@handler("esm.embed_sequence")
-def esm_embed(sequence: str, model_name: str = "esm2_t6_8M_UR50D", **_: Any) -> dict:
-    import torch
-    import esm
-    model, alphabet = getattr(esm, "pretrained").__dict__[model_name]()
-    batch_converter = alphabet.get_batch_converter()
-    model.eval()
-    data = [("protein", sequence)]
-    _, _, batch_tokens = batch_converter(data)
-    with torch.no_grad():
-        results = model(batch_tokens, repr_layers=[6])
-    embedding = results["representations"][6][0, 1:len(sequence)+1].mean(0)
-    return {
-        "model": model_name,
-        "sequence_length": len(sequence),
-        "embedding_dim": embedding.shape[0],
-        "embedding_preview": embedding[:10].tolist(),
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +344,11 @@ def main() -> None:
         try:
             __import__(lib)
             sys.stderr.write(f"[sidecar] preloaded {lib}\n")
+            if lib == "scanpy":
+                __import__("numpy")
+                __import__("pandas")
+                __import__("anndata")
+                sys.stderr.write("[sidecar] preloaded numpy, pandas, anndata (bundled with scanpy)\n")
         except ImportError:
             sys.stderr.write(f"[sidecar] WARNING: could not preload {lib}\n")
 

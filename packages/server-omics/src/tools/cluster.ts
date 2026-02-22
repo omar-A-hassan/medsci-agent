@@ -6,7 +6,8 @@ export const cluster = defineTool({
   description:
     "Cluster cells in a preprocessed single-cell dataset using Leiden or Louvain community detection. Returns cluster assignments and UMAP coordinates.",
   schema: z.object({
-    path: z.string().min(1).describe("Path to the preprocessed .h5ad file"),
+    path: z.string().min(1).describe("Path to the preprocessed input .h5ad file"),
+    output_path: z.string().min(1).describe("Path to save the clustered .h5ad file"),
     resolution: z.number().positive().optional().describe("Clustering resolution (default: 1.0, higher = more clusters)"),
     method: z.enum(["leiden", "louvain"]).optional().describe("Clustering algorithm (default: leiden)"),
   }),
@@ -15,8 +16,10 @@ export const cluster = defineTool({
       method: string;
       n_clusters: number;
       cluster_sizes: Record<string, number>;
+      output_path: string;
     }>("scanpy.cluster", {
       path: input.path,
+      output_path: input.output_path,
       resolution: input.resolution ?? 1.0,
       method: input.method ?? "leiden",
     });

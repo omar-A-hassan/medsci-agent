@@ -12,25 +12,31 @@ export const differentialExpression = defineTool({
     n_genes: z.number().int().positive().optional().describe("Number of top genes per group (default: 50)"),
   }),
   execute: async (input, ctx) => {
-    const data = await ctx.python.call<{
-      groups: string[];
-      top_genes: Record<string, Array<{
-        gene: string;
-        logfoldchange: number;
-        pval_adj: number;
-      }>>;
-    }>("scanpy.differential_expression", {
-      path: input.path,
-      groupby: input.groupby,
-      method: input.method ?? "wilcoxon",
-      n_genes: input.n_genes ?? 50,
-    });
+    let data;
+    try {
+      data = await ctx.python.call<{
+        groups: string[];
+        top_genes: Record<string, Array<{
+          gene: string;
+          logfoldchange: number;
+          pval_adj: number;
+        }>>;
+      }>("scanpy.differential_expression", {
+        path: input.path,
+        groupby: input.groupby,
+        method: input.method ?? "wilcoxon",
+        n_genes: input.n_genes ?? 50,
+      });
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+
     const { interpretation, model_used } = await interpretWithMedGemma(
       ctx,
       data.top_genes,
       `Interpret these differentially expressed genes grouped by "${input.groupby}". ` +
-        "What biological processes, cell types, or pathways do the top markers suggest? " +
-        "Flag any known disease associations.",
+      "What biological processes, cell types, or pathways do the top markers suggest? " +
+      "Flag any known disease associations.",
     );
 
     return { success: true, data: { ...data, interpretation, model_used } };

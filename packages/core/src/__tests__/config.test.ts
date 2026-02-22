@@ -21,7 +21,7 @@ describe("resolveConfig", () => {
   test("returns standard profile by default", () => {
     const config = resolveConfig();
     expect(config.profileConfig.reasoningModel).toBe("medgemma:latest");
-    expect(config.profileConfig.pythonPreload).toEqual(["rdkit", "scanpy", "biopython"]);
+    expect(config.profileConfig.pythonPreload).toEqual(["rdkit", "scanpy", "biopython", "leidenalg", "igraph", "pynndescent"]);
   });
 
   test("resolves lite profile", () => {
