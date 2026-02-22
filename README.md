@@ -30,6 +30,9 @@ Once [setup](#setup) is complete and Ollama is running, open the project in [Ope
 **Drug discovery:**
 > Analyze the drug-likeness of ibuprofen (CC(C)Cc1ccc(cc1)C(C)C(=O)O) and predict its ADMET properties.
 
+![Drug discovery and ADMET prediction demo](docs/drug_demo.gif)
+
+
 **Single-cell omics:**
 > Read my H5AD file, preprocess it, cluster with Leiden at resolution 0.5, and run differential expression.
 
