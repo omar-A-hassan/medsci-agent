@@ -1,21 +1,48 @@
-# MedSci Agent
+<p align="center">
+  <img src="docs/logo.png" alt="MedSci Agent" width="400" />
+</p>
 
-[![MCP Server](https://badge.mcpx.dev?type=server&features=tools)](https://modelcontextprotocol.io)
-[![MedGemma](https://img.shields.io/badge/MedGemma-4B-4285F4?style=flat&logo=google&logoColor=white)](https://huggingface.co/google/medgemma-4b-it)
-[![TxGemma](https://img.shields.io/badge/TxGemma-2B--predict-4285F4?style=flat&logo=google&logoColor=white)](https://huggingface.co/google/txgemma-2b-predict)
-[![Ollama](https://img.shields.io/badge/Ollama-local%20inference-ffffff?style=flat&logo=ollama&logoColor=000000)](https://ollama.com)
-[![OpenCode](https://img.shields.io/badge/OpenCode-compatible-000000?style=flat)](https://opencode.ai)
-[![Bun](https://img.shields.io/badge/Bun-%3E%3D1.1-fbf0df?style=flat&logo=bun&logoColor=000000)](https://bun.sh)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-107%20passing-brightgreen?style=flat)]()
+<p align="center">The open source biomedical research agent.</p>
 
-A biomedical research agent built as a collection of MCP servers for [OpenCode](https://opencode.ai). It provides 20 tools across drug discovery, protein analysis, literature search, medical imaging, and single-cell omics. Tools use [MedGemma](https://huggingface.co/google/medgemma-4b-it) and [TxGemma](https://huggingface.co/google/txgemma-2b-predict) running locally via Ollama for medical reasoning and drug property prediction.
+<p align="center">
+  <a href="https://modelcontextprotocol.io"><img alt="MCP Server" src="https://badge.mcpx.dev?type=server&features=tools" /></a>
+  <a href="https://huggingface.co/google/medgemma-4b-it"><img alt="MedGemma" src="https://img.shields.io/badge/MedGemma-4B-4285F4?style=flat&logo=google&logoColor=white" /></a>
+  <a href="https://huggingface.co/google/txgemma-2b-predict"><img alt="TxGemma" src="https://img.shields.io/badge/TxGemma-2B--predict-4285F4?style=flat&logo=google&logoColor=white" /></a>
+  <a href="https://ollama.com"><img alt="Ollama" src="https://img.shields.io/badge/Ollama-local%20inference-ffffff?style=flat&logo=ollama&logoColor=000000" /></a>
+  <a href="https://opencode.ai"><img alt="OpenCode" src="https://img.shields.io/badge/OpenCode-compatible-000000?style=flat" /></a>
+  <a href="https://bun.sh"><img alt="Bun" src="https://img.shields.io/badge/Bun-%3E%3D1.1-fbf0df?style=flat&logo=bun&logoColor=000000" /></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow?style=flat" /></a>
+  <img alt="Tests" src="https://img.shields.io/badge/tests-107%20passing-brightgreen?style=flat" />
+</p>
+
+[![MedSci Agent running a single-cell RNA-seq pipeline in OpenCode](docs/demo.png)](https://www.kaggle.com/competitions/med-gemma-impact-challenge)
+
+MedSci Agent gives any coding LLM access to 20 biomedical research tools — drug ADMET prediction, protein structure search, single-cell RNA-seq analysis, medical image interpretation, and literature search — all powered by [MedGemma](https://huggingface.co/google/medgemma-4b-it), [TxGemma](https://huggingface.co/google/txgemma-2b-predict) and [OpenCode](https://opencode.ai) running locally via Ollama. No data leaves your machine.
 
 Built for the [MedGemma Impact Challenge](https://www.kaggle.com/competitions/med-gemma-impact-challenge).
 
+---
+
+## Quick Start
+
+Once [setup](#setup) is complete and Ollama is running, open the project in [OpenCode](https://opencode.ai) and try:
+
+**Drug discovery:**
+> Analyze the drug-likeness of ibuprofen (CC(C)Cc1ccc(cc1)C(C)C(=O)O) and predict its ADMET properties.
+
+**Single-cell omics:**
+> Read my H5AD file, preprocess it, cluster with Leiden at resolution 0.5, and run differential expression.
+
+**Literature search:**
+> Search PubMed for recent papers on CRISPR-Cas9 gene therapy for sickle cell disease.
+
+The Agent automatically selects the right tools, calls MedGemma for interpretation, and returns a synthesized answer.
+
+---
+
 ## Architecture
 
-You bring your own LLM. Configure any model in OpenCode (via `/model`) and it becomes the orchestrator -- it reads your query, selects the right tools, calls them through MCP, and synthesizes the results into a coherent answer. The 5 MCP servers handle the domain logic underneath: running local models, querying external databases, and executing scientific computations.
+You bring your own LLM. Configure any model in OpenCode (via `/model`) and it becomes the orchestrator — it reads your query, selects the right tools, calls them through MCP, and synthesizes the results. The 5 MCP servers handle the domain logic underneath.
 
 ```
 Cloud LLM (user's choice via OpenCode)
@@ -39,11 +66,13 @@ Cloud LLM (user's choice via OpenCode)
                        - Scanpy
 ```
 
-**MedGemma** interprets tool outputs -- it reads raw data from APIs and computational tools, then provides clinically relevant summaries. Every tool that calls MedGemma returns a `model_used` flag and degrades gracefully if the model is unavailable.
+**MedGemma** interprets tool outputs — it reads raw data from APIs and computational tools, then provides clinically relevant summaries. Every tool that calls MedGemma returns a `model_used` flag and degrades gracefully if the model is unavailable.
 
-**TxGemma** predicts ADMET properties (absorption, distribution, metabolism, excretion, toxicity). It runs exact prompt templates from the [Therapeutics Data Commons](https://tdcommons.ai) that it was trained on and outputs binary classifications for six safety endpoints.
+**TxGemma** predicts ADMET properties (absorption, distribution, metabolism, excretion, toxicity). It runs exact prompt templates from the [Therapeutics Data Commons](https://tdcommons.ai) and outputs binary classifications for six safety endpoints.
 
-The **Python sidecar** is a long-running process that pre-imports scientific libraries and handles requests over stdin/stdout via JSON-RPC. This avoids the 2-5 second startup cost of importing RDKit or Scanpy on every call.
+The **Python sidecar** is a long-running process that pre-imports scientific libraries and handles requests over stdin/stdout via JSON-RPC. This avoids the 2–5 second startup cost of importing RDKit or Scanpy on every call.
+
+---
 
 ## Tools
 
@@ -92,6 +121,8 @@ The **Python sidecar** is a long-running process that pre-imports scientific lib
 | `differential_expression` | Differential expression between groups (Wilcoxon, t-test, logreg) | Scanpy + MedGemma |
 | `gene_set_enrichment` | Pathway enrichment against MSigDB, GO, KEGG via Enrichr | Enrichr API + MedGemma |
 
+---
+
 ## Setup
 
 ### Prerequisites
@@ -114,10 +145,10 @@ bun install
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Core dependencies (required)
 pip install rdkit-pypi biopython scanpy leidenalg igraph pynndescent
 ```
+
+> **Important:** Set `MEDSCI_PYTHON` to `.venv/bin/python3` in your `opencode.json` server environment blocks. Without this, the Python sidecar will use your system Python, which won't have the scientific libraries installed.
 
 ### 3. Pull Ollama models
 
@@ -126,7 +157,7 @@ ollama pull medgemma:latest
 ollama pull hf.co/matrixportalx/txgemma-2b-predict-GGUF:Q4_K_M
 ```
 
-Alternatively, pull MedGemma directly from HuggingFace (Unsloth's GGUF of [google/medgemma-4b-it](https://huggingface.co/google/medgemma-4b-it)):
+If `medgemma:latest` is not available directly, pull the GGUF from HuggingFace and alias it:
 
 ```bash
 ollama pull hf.co/unsloth/medgemma-4b-it-GGUF:Q4_K_M
@@ -134,11 +165,11 @@ cp ~/.ollama/models/manifests/hf.co/unsloth/medgemma-4b-it-GGUF/Q4_K_M \
    ~/.ollama/models/manifests/registry.ollama.ai/library/medgemma/latest
 ```
 
-The second command aliases it so the code can reference it as `medgemma:latest`.
+> **Note:** The `cp` command creates an alias so the code can reference the model as `medgemma:latest` regardless of how it was downloaded.
 
 ### 4. Configure OpenCode
 
-Copy `opencode.json` to your project root (already included). Set the `model` field to whatever cloud LLM you want to use as the router:
+The included `opencode.json` is pre-configured. Set the `model` field to your preferred cloud LLM:
 
 ```json
 {
@@ -146,7 +177,7 @@ Copy `opencode.json` to your project root (already included). Set the `model` fi
 }
 ```
 
-The MCP server entries in `opencode.json` point to each server's entry file. Update the `command` paths and `MEDSCI_PYTHON` environment variable if your Bun binary or Python virtual environment are in different locations.
+Update the `MEDSCI_PYTHON` path in each server's environment block if your virtual environment is in a different location.
 
 ### 5. Run tests
 
@@ -157,6 +188,8 @@ bun test
 ### 6. Start
 
 Make sure Ollama is running, then open the project directory in OpenCode. The MCP servers start automatically.
+
+---
 
 ## Configuration
 
@@ -171,13 +204,15 @@ Environment variables (set in `opencode.json` under each server's `environment`)
 | `MEDSCI_OLLAMA_TIMEOUT` | `120000` | Ollama request timeout in milliseconds |
 | `MEDSCI_PYTHON_TIMEOUT` | `60000` | Python sidecar request timeout in milliseconds |
 
-The `MEDSCI_PROFILE` setting controls which Python libraries are pre-imported when the sidecar starts. All tools work regardless of profile -- the sidecar imports libraries lazily on first use -- but pre-importing avoids a cold-start delay on the first call to each library.
+The `MEDSCI_PROFILE` setting controls which Python libraries are pre-imported when the sidecar starts. All tools work regardless of profile — the sidecar imports libraries lazily on first use — but pre-importing avoids a cold-start delay on the first call.
 
 | Profile | Pre-imported | Use case |
 |---------|--------------|----------|
 | `lite` | RDKit | Drug discovery tools only, lower memory usage |
 | `standard` | RDKit, Scanpy, BioPython, leidenalg, igraph, pynndescent | Most workflows |
 | `full` | All available | Fastest first-call latency across all tools |
+
+---
 
 ## Project Structure
 
@@ -197,6 +232,8 @@ medsci-agent/
     skills/             Skill definitions for OpenCode
   opencode.json         OpenCode configuration (model, MCP servers)
 ```
+
+---
 
 ## License
 
