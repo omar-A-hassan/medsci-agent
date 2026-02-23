@@ -41,6 +41,8 @@ Once [setup](#setup) is complete and Ollama is running, open the project in [Ope
 **Literature search:**
 > Search PubMed for recent papers on CRISPR-Cas9 gene therapy for sickle cell disease.
 
+![Literature demo](docs/Literature_demo.gif)
+
 The Agent automatically selects the right tools, calls MedGemma for interpretation, and returns a synthesized answer.
 
 ---
