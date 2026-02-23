@@ -36,6 +36,8 @@ Once [setup](#setup) is complete and Ollama is running, open the project in [Ope
 **Single-cell omics:**
 > Read my H5AD file, preprocess it, cluster with Leiden at resolution 0.5, and run differential expression.
 
+![Single-cell omics demo](docs/omics_demo.gif)
+
 **Literature search:**
 > Search PubMed for recent papers on CRISPR-Cas9 gene therapy for sickle cell disease.
 
