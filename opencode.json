@@ -7,11 +7,15 @@
       }
     }
   },
-  "model": "ollama/ministral-3:8b-instruct-2512-q4_K_M",
+  "model": "ollama/medgemma:latest",
   "mcp": {
     "medsci-omics": {
       "type": "local",
-      "command": ["bun", "run", "packages/server-omics/src/index.ts"],
+      "command": [
+        "bun",
+        "run",
+        "packages/server-omics/src/index.ts"
+      ],
       "timeout": 300000,
       "environment": {
         "MEDSCI_PROFILE": "standard",
@@ -20,7 +24,11 @@
     },
     "medsci-drug": {
       "type": "local",
-      "command": ["bun", "run", "packages/server-drug/src/index.ts"],
+      "command": [
+        "bun",
+        "run",
+        "packages/server-drug/src/index.ts"
+      ],
       "timeout": 300000,
       "environment": {
         "MEDSCI_PROFILE": "standard",
@@ -29,7 +37,11 @@
     },
     "medsci-protein": {
       "type": "local",
-      "command": ["bun", "run", "packages/server-protein/src/index.ts"],
+      "command": [
+        "bun",
+        "run",
+        "packages/server-protein/src/index.ts"
+      ],
       "timeout": 300000,
       "environment": {
         "MEDSCI_PROFILE": "standard",
@@ -38,7 +50,11 @@
     },
     "medsci-imaging": {
       "type": "local",
-      "command": ["bun", "run", "packages/server-imaging/src/index.ts"],
+      "command": [
+        "bun",
+        "run",
+        "packages/server-imaging/src/index.ts"
+      ],
       "timeout": 300000,
       "environment": {
         "MEDSCI_PROFILE": "standard",
@@ -47,11 +63,27 @@
     },
     "medsci-literature": {
       "type": "local",
-      "command": ["bun", "run", "packages/server-literature/src/index.ts"],
+      "command": [
+        "bun",
+        "run",
+        "packages/server-literature/src/index.ts"
+      ],
       "timeout": 300000,
       "environment": {
         "MEDSCI_PROFILE": "standard",
         "MEDSCI_PYTHON": ".venv/bin/python3"
+      }
+    },
+    "medsci-paperqa": {
+      "type": "local",
+      "command": [
+        "bun",
+        "run",
+        "packages/server-paperqa/src/index.ts"
+      ],
+      "timeout": 600000,
+      "environment": {
+        "MEDSCI_PYTHON": ".venv-paperqa/bin/python3"
       }
     }
   }

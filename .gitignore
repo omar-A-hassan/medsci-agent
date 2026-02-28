@@ -7,6 +7,7 @@ dist/
 *.log
 coverage/
 .venv/
+.venv-paperqa/
 __pycache__/
 *.pyc
 .mypy_cache/

@@ -1,0 +1,4 @@
+paper-qa>=5.0.0
+litellm
+docling
+tantivy

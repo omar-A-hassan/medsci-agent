@@ -10,22 +10,23 @@ export { interpretWithMedGemma } from "./interpret";
 export type { InterpretResult } from "./interpret";
 
 export type {
-  ToolContext,
-  ToolResult,
-  ToolDefinition,
-  HardwareProfile,
-  ProfileConfig,
-  OllamaClientInterface,
-  PythonSidecarInterface,
-  GenerateOpts,
-  ClassifyResult,
-  SidecarRequest,
-  SidecarResponse,
-  Logger,
-  LogLevel,
+	ToolContext,
+	ToolResult,
+	ToolDefinition,
+	HardwareProfile,
+	ProfileConfig,
+	OllamaClientInterface,
+	PythonSidecarInterface,
+	GenerateOpts,
+	ClassifyResult,
+	SidecarRequest,
+	SidecarResponse,
+	Logger,
+	LogLevel,
 } from "./types";
 
 export { PROFILES } from "./types";
 
 // Test utilities — only used by test files across packages
 export { createMockContext } from "./__tests__/test-helpers";
+export { resilientFetch } from "./utils";

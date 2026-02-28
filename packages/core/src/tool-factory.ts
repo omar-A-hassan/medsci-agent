@@ -22,49 +22,50 @@ import type { ToolContext, ToolDefinition, ToolResult } from "./types";
  *   });
  */
 export function defineTool<TInput, TOutput>(config: {
-  name: string;
-  description: string;
-  schema: z.ZodType<TInput>;
-  execute: (input: TInput, ctx: ToolContext) => Promise<ToolResult<TOutput>>;
+	name: string;
+	description: string;
+	schema: z.ZodType<TInput>;
+	execute: (input: TInput, ctx: ToolContext) => Promise<ToolResult<TOutput>>;
 }): ToolDefinition<TInput, TOutput> {
-  return {
-    name: config.name,
-    description: config.description,
-    schema: config.schema,
-    execute: async (
-      rawInput: TInput,
-      ctx: ToolContext,
-    ): Promise<ToolResult<TOutput>> => {
-      const start = performance.now();
+	return {
+		name: config.name,
+		description: config.description,
+		schema: config.schema,
+		execute: async (
+			rawInput: TInput,
+			ctx: ToolContext,
+		): Promise<ToolResult<TOutput>> => {
+			const start = performance.now();
 
-      // --- Validate input ---
-      const parsed = config.schema.safeParse(rawInput);
-      if (!parsed.success) {
-        const issues = parsed.error.issues
-          .map((i) => `${i.path.join(".")}: ${i.message}`)
-          .join("; ");
-        ctx.log.warn(`[${config.name}] validation failed: ${issues}`);
-        return {
-          success: false,
-          error: `Invalid input: ${issues}`,
-          duration_ms: performance.now() - start,
-        };
-      }
+			// --- Validate input ---
+			const parsed = config.schema.safeParse(rawInput);
+			if (!parsed.success) {
+				const issues = parsed.error.issues
+					.map((i) => `${i.path.join(".")}: ${i.message}`)
+					.join("; ");
+				ctx.log.warn(`[${config.name}] validation failed: ${issues}`);
+				return {
+					success: false,
+					error: `Invalid input: ${issues}`,
+					duration_ms: performance.now() - start,
+				};
+			}
 
-      // --- Execute ---
-      try {
-        ctx.log.info(`[${config.name}] executing`);
-        const result = await config.execute(parsed.data, ctx);
-        const duration_ms = performance.now() - start;
-        ctx.log.info(`[${config.name}] completed in ${duration_ms.toFixed(0)}ms`);
-        return { ...result, duration_ms };
-      } catch (err) {
-        const duration_ms = performance.now() - start;
-        const message =
-          err instanceof Error ? err.message : String(err);
-        ctx.log.error(`[${config.name}] failed: ${message}`);
-        return { success: false, error: message, duration_ms };
-      }
-    },
-  };
+			// --- Execute ---
+			try {
+				ctx.log.info(`[${config.name}] executing`);
+				const result = await config.execute(parsed.data, ctx);
+				const duration_ms = performance.now() - start;
+				ctx.log.info(
+					`[${config.name}] completed in ${duration_ms.toFixed(0)}ms`,
+				);
+				return { ...result, duration_ms };
+			} catch (err) {
+				const duration_ms = performance.now() - start;
+				const message = err instanceof Error ? err.message : String(err);
+				ctx.log.error(`[${config.name}] failed: ${message}`);
+				return { success: false, error: message, duration_ms };
+			}
+		},
+	};
 }

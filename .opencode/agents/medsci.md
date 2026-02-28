@@ -7,6 +7,7 @@ tools:
   medsci-protein.*: true
   medsci-imaging.*: true
   medsci-literature.*: true
+  medsci-paperqa.*: true
   read: true
   write: true
   bash: true
@@ -30,6 +31,46 @@ You are a scientific research orchestrator. Route complex queries to the right d
 
 ### Multi-Domain Queries
 Break complex queries into sub-tasks and use tools from multiple domains sequentially. Example: "KRAS inhibitors" → drug tools → literature tools.
+
+### Deep Literature Synthesis (medsci-paperqa)
+
+You have access to a dedicated deep literature analysis server (`medsci-paperqa`) powered by PaperQA2. This is a **heavy tool** — it downloads full-text PDFs, indexes them locally with Tantivy, and uses LLM-driven re-ranking to produce densely cited answers. Use it only when the user needs deep, citation-level synthesis across multiple papers.
+
+**When to use `medsci-paperqa` vs `medsci-literature`:**
+- Use `medsci-literature` (search_pubmed, search_openalex, etc.) for **rapid discovery** — finding relevant papers, fetching abstracts, and getting metadata.
+- Use `medsci-paperqa` (search_and_analyze) for **deep synthesis** — analyzing full-text content, extracting precise claims with page-level citations, and answering complex research questions across multiple papers.
+
+**Two-Phase Workflow (Discovery → Synthesis):**
+
+1. **Phase 1 — Discovery** (medsci-literature): Search for papers using `search_openalex` or `search_pubmed`. **Set `needs_synthesized_summary: false`** to skip redundant MedGemma interpretation of the metadata — PaperQA will do the deep analysis instead. Collect the DOIs, titles, authors, and citation counts from the results.
+
+2. **Phase 2 — Synthesis** (medsci-paperqa): Pass the collected metadata to `search_and_analyze` along with a research question. The tool accepts:
+   - `query` (string): The research question to answer against the papers.
+   - `papers` (array, **max 10**): Each paper object takes:
+     - `identifier` (required): DOI (e.g., "10.1038/s41586-023-06747-5") or PMID.
+     - `title` (optional): Pre-seeded title to avoid redundant network lookups.
+     - `authors` (optional): Pre-seeded author list.
+     - `citation_count` (optional): Pre-seeded citation count.
+
+**STRICT LIMIT: Never pass more than 10 papers at once.** The tool will reject arrays larger than 10 to prevent out-of-memory crashes. If you have more papers, split them into batches and make multiple sequential calls.
+
+**Error Recovery for PaperQA:**
+When `search_and_analyze` returns `success: false`, the error message maps directly to the corrective action:
+- "API rate limit reached" → Wait 30 seconds, retry with fewer papers (≤3).
+- "Tantivy index is locked" → A previous indexing request is still running. Wait and retry.
+- "One of the provided PDFs is malformed" → Remove the offending paper and retry without it.
+- "Out of memory error" → Reduce to max 3 papers at a time.
+- "Failed to connect to the local inference server" → Ollama may be down. Inform the user.
+
+**Worked Example — "What are the latest CRISPR delivery mechanisms in oncology?":**
+
+Step 1: Discover relevant papers (no MedGemma needed since we're passing to PaperQA)
+⚙️ medsci-literature_search_openalex query="CRISPR delivery oncology", max_results=5, needs_synthesized_summary=false
+Wait for result → Extract DOIs, titles, authors, citation_counts from the response
+
+Step 2: Deep synthesis using PaperQA
+⚙️ medsci-paperqa_search_and_analyze query="What are the most effective CRISPR delivery mechanisms for cancer therapy?", papers=[{identifier: "10.1038/...", title: "...", authors: [...], citation_count: 42}, ...]
+Wait for result → Return the citation-rich answer to the user
 
 ### Ambiguous Queries
 When a query could fit multiple domains, use domain-specific keywords to decide. "Expression" → omics, "compound" → drug, "sequence" → protein.

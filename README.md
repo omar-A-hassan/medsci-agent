@@ -63,6 +63,7 @@ Cloud LLM (user's choice via OpenCode)
 |  server-literature  4 tools           |
 |  server-imaging     1 tool            |
 |  server-omics       5 tools           |
+|  server-paperqa     1 tool            |
 |                                       |
 +-------+-------------------+-----------+
         |                   |
@@ -103,7 +104,7 @@ The **Python sidecar** is a long-running process that pre-imports scientific lib
 | `search_pdb` | Search PDB for 3D structures by protein or PDB ID | RCSB PDB API + MedGemma |
 | `predict_structure` | Retrieve AlphaFold predicted structure and confidence scores | AlphaFold DB API + MedGemma |
 
-### Literature (server-literature)
+### Literature & Synthesis (server-literature & server-paperqa)
 
 | Tool | Description | Backend |
 |------|-------------|---------|
@@ -111,6 +112,7 @@ The **Python sidecar** is a long-running process that pre-imports scientific lib
 | `fetch_abstract` | Fetch full abstract and metadata by PMID | NCBI E-utilities + MedGemma |
 | `search_openalex` | Search OpenAlex for scholarly works, citations, open access status | OpenAlex API + MedGemma |
 | `search_clinical_trials` | Search ClinicalTrials.gov by condition, drug, or intervention | ClinicalTrials.gov API + MedGemma |
+| `search_and_analyze` | Deep semantic synthesis of up to 10 full-text PDFs using contextual LLM re-ranking | PaperQA2 + Tantivy |
 
 ### Medical Imaging (server-imaging)
 
@@ -147,15 +149,25 @@ cd medsci-agent
 bun install
 ```
 
-### 2. Python environment
+### 2. Python environments
 
+The system uses two strictly decoupled Python virtual environments to prevent heavy machine-learning OCR models from bloating the core agent if you do not want to use PDF Analysis.
+
+**Core Environment (Required):**
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install rdkit-pypi biopython scanpy leidenalg igraph pynndescent
+pip install -r requirements.txt
 ```
 
-> **Important:** Set `MEDSCI_PYTHON` to `.venv/bin/python3` in your `opencode.json` server environment blocks. Without this, the Python sidecar will use your system Python, which won't have the scientific libraries installed.
+**PaperQA Environment (Optional, for deep literature synthesis):**
+```bash
+python3 -m venv .venv-paperqa
+source .venv-paperqa/bin/activate
+pip install -r packages/server-paperqa/requirements.txt
+```
+
+> **Important:** Set `MEDSCI_PYTHON` appropriately in your `opencode.json` server environment blocks (e.g., `.venv/bin/python3` for core tools and `.venv-paperqa/bin/python3` for `server-paperqa`). Without this, the Python sidecar will use your system Python.
 
 ### 3. Pull Ollama models
 
@@ -219,6 +231,12 @@ The `MEDSCI_PROFILE` setting controls which Python libraries are pre-imported wh
 | `standard` | RDKit, Scanpy, BioPython, leidenalg, igraph, pynndescent | Most workflows |
 | `full` | All available | Fastest first-call latency across all tools |
 
+### PaperQA Data Nuances
+When querying deep PDFs via `server-paperqa`, the agent automatically downloads, parses, and indexes the scholarly text locally. 
+- **Stateless Constraints**: Tantivy Vector indexes are stored in `.opencode/pqa_index`. Do **not** manually delete this folder while a PaperQA sync is in progress or you will corrupt the lockfiles.
+- **Caching**: LLM re-ranking results are aggressively cached to `.opencode/pqa_cache` by default to save tokens across sequential agent conversations.
+- **Resource Exhaustion**: The `search_and_analyze` schema strictly bounds processing to `max_papers=10` per chunk to avoid Out-of-Memory crashes. If the orchestrator passes DOIs to this tool, PaperQA will automatically use the `.venv-paperqa` environment to process them asynchronously.
+
 ---
 
 ## Project Structure
@@ -234,8 +252,9 @@ medsci-agent/
     server-literature/  Literature search MCP server
     server-imaging/     Medical imaging MCP server
     server-omics/       Single-cell and omics MCP server
+    server-paperqa/     Deep literature PDF synthesis MCP server
   .opencode/
-    agents/             Agent definitions (orchestrator + 4 domain specialists)
+    agents/             Agent definitions (orchestrator + 4 domain specialists + PaperQA routing)
     skills/             Skill definitions for OpenCode
   opencode.json         OpenCode configuration (model, MCP servers)
 ```
