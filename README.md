@@ -278,6 +278,7 @@ This project builds on the following work:
 
 - **Prompt Repetition** ([Leviathan, Kalman & Matias, 2025](https://arxiv.org/abs/2512.14982)) — Our `interpretWithMedGemma` function repeats the instruction after the data context to improve non-reasoning model accuracy.
 - **TxGemma** ([Wang, Schmidgall, Jaeger et al., 2025](https://arxiv.org/abs/2504.06196)) — ADMET prediction uses verbatim prompt templates from Google's TxGemma, trained on [Therapeutics Data Commons](https://tdcommons.ai) benchmarks.
+- **PaperQA2** ([Future-House/paper-qa](https://github.com/Future-House/paper-qa)) — Deep literature synthesis and RAG for biomedical PDFs is powered by FutureHouse's PaperQA2 library.
 - **K-Dense Scientific Skills** ([K-Dense-AI/claude-scientific-skills](https://github.com/K-Dense-AI/claude-scientific-skills)) — The OpenCode skills in this project are adapted from K-Dense AI's open-source collection of 147+ scientific skills for AI agents.
 
 ---
