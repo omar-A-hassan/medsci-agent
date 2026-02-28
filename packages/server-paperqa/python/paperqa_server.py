@@ -126,10 +126,16 @@ def main():
             req = json.loads(line)
             req_id = req.get("id")
             method = req.get("method")
-            params = req.get("params", {})
+            args = req.get("args", {})
             
-            if method == "analyze_papers":
-                result = handle_analyze_papers(params)
+            if method == "__health__":
+                sys.stdout.write(json.dumps({"id": req_id, "result": {"status": "ok"}}) + "\n")
+            elif method == "__shutdown__":
+                sys.stdout.write(json.dumps({"id": req_id, "result": {"status": "shutting_down"}}) + "\n")
+                sys.stdout.flush()
+                sys.exit(0)
+            elif method == "analyze_papers":
+                result = handle_analyze_papers(args)
                 sys.stdout.write(json.dumps({"id": req_id, "result": result}) + "\n")
             else:
                 sys.stdout.write(json.dumps({"id": req_id, "error": f"Unknown method: {method}"}) + "\n")
