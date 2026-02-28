@@ -173,6 +173,7 @@ pip install -r packages/server-paperqa/requirements.txt
 
 ```bash
 ollama pull medgemma:latest
+ollama pull mxbai-embed-large
 ollama pull hf.co/matrixportalx/txgemma-2b-predict-GGUF:Q4_K_M
 ```
 
@@ -222,6 +223,10 @@ Environment variables (set in `opencode.json` under each server's `environment`)
 | `MEDSCI_OLLAMA_MODEL` | `medgemma:latest` | Default Ollama model for interpretation |
 | `MEDSCI_OLLAMA_TIMEOUT` | `120000` | Ollama request timeout in milliseconds |
 | `MEDSCI_PYTHON_TIMEOUT` | `60000` | Python sidecar request timeout in milliseconds |
+| `PQA_LLM_MODEL` | `ollama/medgemma:latest` | LLM model PaperQA uses for summarization/answering (litellm format) |
+| `PQA_EMBEDDING_MODEL` | `ollama/mxbai-embed-large` | Embedding model PaperQA uses for document indexing |
+| `PQA_OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint for PaperQA (separate from core) |
+| `PQA_EMAIL` | `medsci-agent@localhost` | Email for Unpaywall API access (open-access PDF downloads) |
 
 The `MEDSCI_PROFILE` setting controls which Python libraries are pre-imported when the sidecar starts. All tools work regardless of profile — the sidecar imports libraries lazily on first use — but pre-importing avoids a cold-start delay on the first call.
 
@@ -232,10 +237,16 @@ The `MEDSCI_PROFILE` setting controls which Python libraries are pre-imported wh
 | `full` | All available | Fastest first-call latency across all tools |
 
 ### PaperQA Data Nuances
-When querying deep PDFs via `server-paperqa`, the agent automatically downloads, parses, and indexes the scholarly text locally. 
-- **Stateless Constraints**: Tantivy Vector indexes are stored in `.opencode/pqa_index`. Do **not** manually delete this folder while a PaperQA sync is in progress or you will corrupt the lockfiles.
-- **Caching**: LLM re-ranking results are aggressively cached to `.opencode/pqa_cache` by default to save tokens across sequential agent conversations.
-- **Resource Exhaustion**: The `search_and_analyze` schema strictly bounds processing to `max_papers=10` per chunk to avoid Out-of-Memory crashes. If the orchestrator passes DOIs to this tool, PaperQA will automatically use the `.venv-paperqa` environment to process them asynchronously.
+When querying deep PDFs via `server-paperqa`, the tool performs a multi-step pipeline:
+1. **PDF Download** — Papers are fetched via Unpaywall (DOIs) or PubMed Central (PMIDs) into `.opencode/pqa_papers/`.
+2. **Indexing** — PaperQA2 parses PDFs and builds a search index in `.opencode/pqa_index/`.
+3. **RAG Synthesis** — The query runs against indexed chunks using Ollama for both summarization and final answer generation.
+
+- **Models**: PaperQA uses `PQA_LLM_MODEL` (default: `ollama/medgemma:latest`) for summarization and answering, and `PQA_EMBEDDING_MODEL` (default: `ollama/mxbai-embed-large`) for document embeddings. Both run locally via Ollama.
+- **Agent Type**: Uses `"fake"` agent mode (deterministic search → gather evidence → answer path) rather than an LLM-driven agent, which reduces token usage.
+- **Paper Limits**: The `search_and_analyze` schema strictly bounds processing to `max_papers=10` per call to avoid Out-of-Memory crashes.
+- **Open Access Only**: PDF downloads rely on Unpaywall and PMC. Papers behind paywalls will fail to download — the tool will report which papers it couldn't fetch.
+- **Stateful Indexes**: Do **not** manually delete `.opencode/pqa_index/` or `.opencode/pqa_papers/` while a PaperQA query is in progress.
 
 ---
 

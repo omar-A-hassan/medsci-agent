@@ -1,4 +1,3 @@
-paper-qa>=5.0.0
+paper-qa[local]>=5.0.0
 litellm
-docling
-tantivy
+httpx

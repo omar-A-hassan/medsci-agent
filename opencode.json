@@ -83,7 +83,10 @@
       ],
       "timeout": 600000,
       "environment": {
-        "MEDSCI_PYTHON": ".venv-paperqa/bin/python3"
+        "MEDSCI_PYTHON": ".venv-paperqa/bin/python3",
+        "PQA_LLM_MODEL": "ollama/medgemma:latest",
+        "PQA_EMBEDDING_MODEL": "ollama/mxbai-embed-large",
+        "PQA_OLLAMA_URL": "http://localhost:11434"
       }
     }
   }
