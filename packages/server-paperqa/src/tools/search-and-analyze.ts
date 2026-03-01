@@ -33,6 +33,9 @@ function mapPaperQaError(error: any): string {
 	if (msg.includes("LLMConnectionError")) {
 		return "Failed to connect to the local inference server (Ollama). Check if it is running.";
 	}
+	if (msg.includes("ConnectError") || msg.includes("NCBI")) {
+		return "Failed to reach NCBI APIs. Check network connectivity.";
+	}
 
 	// Fallback map
 	return `PaperQA Agent Error: ${msg}`;
@@ -41,7 +44,7 @@ function mapPaperQaError(error: any): string {
 export const searchAndAnalyzeTool = defineTool({
 	name: "search_and_analyze",
 	description:
-		"Performs deep literature analysis using PaperQA2. Automatically downloads PDFs for the provided DOIs/PMIDs, indexes them locally with Tantivy, and uses a Re-ranking Contextual LLM strategy to generate a heavily cited answer to your query.",
+		"Performs deep literature analysis using PaperQA2. Acquires full text via NCBI BioC API for the provided DOIs/PMIDs (with abstract fallback), indexes them locally with Tantivy, and uses a Re-ranking Contextual LLM strategy to generate a heavily cited answer to your query.",
 	schema: z.object({
 		query: z
 			.string()

@@ -21,7 +21,7 @@ import os
 import sys
 import tempfile
 import traceback
-from typing import Any, Dict, List
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 # Basic logging to stderr so it doesn't pollute stdout JSON IPC
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
@@ -84,65 +84,161 @@ def build_settings(workspace_dir: str):
     return settings, paper_dir
 
 
-async def download_paper(identifier: str, paper_dir: str) -> str | None:
+class AcquireResult(NamedTuple):
+    filepath: Optional[str]
+    source: str  # "full_text" | "abstract" | "cached" | "failed"
+    pmcid: Optional[str]
+
+
+async def _resolve_to_pmcid(
+    identifier: str, client, email: str
+) -> Tuple[Optional[str], Optional[str]]:
     """
-    Download a paper PDF by DOI or PMID into the paper directory.
-    Returns the local file path if successful, None otherwise.
+    Use NCBI ID Converter to resolve a DOI, PMID, or PMCID into a (pmcid, pmid) tuple.
+    """
+    if identifier.upper().startswith("PMC"):
+        return (identifier.upper(), None)
+
+    url = (
+        f"https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/"
+        f"?ids={identifier}&format=json&tool=medsci-agent&email={email}"
+    )
+    try:
+        resp = await client.get(url)
+        if resp.status_code == 200:
+            records = resp.json().get("records", [])
+            if records:
+                rec = records[0]
+                pmcid = rec.get("pmcid")
+                pmid = rec.get("pmid")
+                return (pmcid, pmid)
+    except Exception as e:
+        logger.warning(f"NCBI ID conversion failed for {identifier}: {e}")
+
+    # If identifier is purely digits, treat it as a PMID even if converter failed
+    if identifier.isdigit():
+        return (None, identifier)
+
+    return (None, None)
+
+
+async def _fetch_bioc_fulltext(pmcid: str, client) -> Optional[str]:
+    """
+    Fetch full-text article from NCBI BioC PMC Open Access API.
+    Returns joined passage text or None.
+    """
+    url = (
+        f"https://www.ncbi.nlm.nih.gov/research/bionlp/RESTful/"
+        f"pmcoa.cgi/BioC_json/{pmcid}/unicode"
+    )
+    try:
+        resp = await client.get(url)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        passages = data[0]["documents"][0]["passages"]
+        texts = [p["text"] for p in passages if p.get("text")]
+        if not texts:
+            return None
+        return "\n\n".join(texts)
+    except Exception as e:
+        logger.warning(f"BioC full-text fetch failed for {pmcid}: {e}")
+        return None
+
+
+async def _fetch_bioc_abstract(pmid: str, client) -> Optional[str]:
+    """
+    Fetch abstract-only text from NCBI BioC PubMed API.
+    Returns abstract text with a notice, or None.
+    """
+    url = (
+        f"https://www.ncbi.nlm.nih.gov/research/bionlp/RESTful/"
+        f"pubmed.cgi/BioC_json/{pmid}/unicode"
+    )
+    try:
+        resp = await client.get(url)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        passages = data[0]["documents"][0]["passages"]
+        texts = [p["text"] for p in passages if p.get("text")]
+        if not texts:
+            return None
+        body = "\n\n".join(texts)
+        return (
+            "[ABSTRACT ONLY — Full text not available in PMC Open Access]\n\n"
+            + body
+        )
+    except Exception as e:
+        logger.warning(f"BioC abstract fetch failed for PMID {pmid}: {e}")
+        return None
+
+
+async def acquire_paper_text(
+    identifier: str, paper_dir: str, paper_meta: Optional[Dict] = None
+) -> AcquireResult:
+    """
+    Acquire paper text via NCBI BioC API (full text or abstract fallback).
+    Writes a .txt file into paper_dir and returns an AcquireResult.
     """
     import httpx
 
-    # Try DOI-based download via Unpaywall / DOI redirect
-    if identifier.startswith("10."):
-        # Try Unpaywall first (free PDFs)
-        try:
-            email = os.environ.get("PQA_EMAIL", "medsci-agent@localhost")
-            async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-                resp = await client.get(
-                    f"https://api.unpaywall.org/v2/{identifier}?email={email}"
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    pdf_url = None
-                    oa = data.get("best_oa_location")
-                    if oa:
-                        pdf_url = oa.get("url_for_pdf") or oa.get("url")
-                    if pdf_url:
-                        pdf_resp = await client.get(pdf_url)
-                        if pdf_resp.status_code == 200:
-                            safe_name = identifier.replace("/", "_") + ".pdf"
-                            filepath = os.path.join(paper_dir, safe_name)
-                            with open(filepath, "wb") as f:
-                                f.write(pdf_resp.content)
-                            logger.info(f"Downloaded {identifier} -> {filepath}")
-                            return filepath
-        except Exception as e:
-            logger.warning(f"Unpaywall download failed for {identifier}: {e}")
+    if paper_meta is None:
+        paper_meta = {}
 
-    # PMID-based: try PubMed Central
-    if identifier.isdigit():
-        try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-                # Convert PMID to PMCID
-                resp = await client.get(
-                    f"https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids={identifier}&format=json"
-                )
-                if resp.status_code == 200:
-                    records = resp.json().get("records", [])
-                    if records and records[0].get("pmcid"):
-                        pmcid = records[0]["pmcid"]
-                        pdf_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/pdf/"
-                        pdf_resp = await client.get(pdf_url)
-                        if pdf_resp.status_code == 200 and len(pdf_resp.content) > 1000:
-                            filepath = os.path.join(paper_dir, f"{identifier}.pdf")
-                            with open(filepath, "wb") as f:
-                                f.write(pdf_resp.content)
-                            logger.info(f"Downloaded PMID:{identifier} -> {filepath}")
-                            return filepath
-        except Exception as e:
-            logger.warning(f"PMC download failed for PMID {identifier}: {e}")
+    safe_id = identifier.replace("/", "_")
+    cached_path = os.path.join(paper_dir, f"{safe_id}.txt")
 
-    logger.warning(f"Could not download paper: {identifier}")
-    return None
+    # 1. Cache check
+    if os.path.exists(cached_path):
+        logger.info(f"Cache hit for {identifier}")
+        return AcquireResult(filepath=cached_path, source="cached", pmcid=None)
+
+    email = os.environ.get("PQA_EMAIL", "medsci-agent@localhost")
+
+    async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+        # 2. Resolve identifier to PMCID + PMID
+        pmcid, pmid = await _resolve_to_pmcid(identifier, client, email)
+
+        body = None
+        source = "failed"
+
+        # 3. Try full text via BioC PMC OA
+        if pmcid:
+            body = await _fetch_bioc_fulltext(pmcid, client)
+            if body:
+                source = "full_text"
+
+        # 4. Abstract fallback via BioC PubMed
+        if not body and pmid:
+            body = await _fetch_bioc_abstract(pmid, client)
+            if body:
+                source = "abstract"
+
+        if not body:
+            logger.warning(f"Could not acquire text for {identifier}")
+            return AcquireResult(filepath=None, source="failed", pmcid=pmcid)
+
+        # 5. Write .txt with metadata header
+        title = paper_meta.get("title") or identifier
+        authors = paper_meta.get("authors", [])
+        authors_str = ", ".join(authors[:5]) if authors else "Unknown"
+        doi = identifier if identifier.startswith("10.") else ""
+
+        header = (
+            f"Title: {title}\n"
+            f"Authors: {authors_str}\n"
+            f"DOI: {doi}\n"
+            f"PMCID: {pmcid or 'N/A'}\n"
+            f"Source: {source}\n"
+            f"\n---\n\n"
+        )
+
+        with open(cached_path, "w", encoding="utf-8") as f:
+            f.write(header + body)
+
+        logger.info(f"Acquired {identifier} ({source}) -> {cached_path}")
+        return AcquireResult(filepath=cached_path, source=source, pmcid=pmcid)
 
 
 async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -169,27 +265,39 @@ async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
     # 1. Build settings
     settings, paper_dir = build_settings(workspace_dir)
 
-    # 2. Download papers
-    downloaded_files = []
+    # 2. Acquire paper texts via NCBI BioC API
+    acquired_files = []
     failed_downloads = []
+    abstract_only = []
+    full_text_ids = []
+
     for p in papers:
         identifier = p.get("identifier", "")
         if not identifier:
             continue
-        filepath = await download_paper(identifier, paper_dir)
-        if filepath:
-            downloaded_files.append({
-                "path": filepath,
+        result = await acquire_paper_text(
+            identifier, paper_dir, paper_meta=p
+        )
+        if result.source == "failed":
+            failed_downloads.append(identifier)
+        else:
+            acquired_files.append({
+                "path": result.filepath,
                 "identifier": identifier,
                 "title": p.get("title"),
                 "authors": p.get("authors", []),
             })
-        else:
-            failed_downloads.append(identifier)
+            if result.source == "abstract":
+                abstract_only.append(identifier)
+            elif result.source in ("full_text", "cached"):
+                full_text_ids.append(identifier)
 
-    if not downloaded_files:
+    if not acquired_files:
         return {
-            "answer": "Could not download any of the requested papers. They may be behind paywalls.",
+            "answer": (
+                "Could not acquire text for any of the requested papers. "
+                "They may not be available in PMC Open Access or PubMed."
+            ),
             "references": [],
             "context": "",
             "failed_downloads": failed_downloads,
@@ -197,7 +305,7 @@ async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     # 3. Create Docs object and add papers manually
     docs = Docs()
-    for paper in downloaded_files:
+    for paper in acquired_files:
         try:
             # Build citation string from metadata
             authors_str = ", ".join(paper["authors"][:3]) if paper["authors"] else "Unknown"
@@ -222,8 +330,12 @@ async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
         "answer": session.formatted_answer if hasattr(session, "formatted_answer") else str(session),
         "references": session.references if hasattr(session, "references") else [],
         "context": session.context if hasattr(session, "context") else "",
-        "papers_indexed": len(downloaded_files),
+        "papers_indexed": len(acquired_files),
         "failed_downloads": failed_downloads,
+        "acquisition_summary": {
+            "full_text": full_text_ids,
+            "abstract_only": abstract_only,
+        },
     }
 
 
