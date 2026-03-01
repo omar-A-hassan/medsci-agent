@@ -4,10 +4,17 @@ export { defineTool } from "./tool-factory";
 export { createMcpServer } from "./server-factory";
 export { OllamaClient } from "./models/ollama";
 export { PythonSidecar } from "./models/python-sidecar";
+export { resolvePythonSidecarOptions } from "./models/python-sidecar-bootstrap";
+export type {
+	PythonSidecarOptions,
+	ResolvedPythonSidecarOptions,
+} from "./models/python-sidecar-bootstrap";
 export { createLogger } from "./logger";
 export { resolveConfig } from "./config";
 export { interpretWithMedGemma } from "./interpret";
 export type { InterpretResult } from "./interpret";
+export { withOptionalSynthesis } from "./optional-synthesis";
+export { getSidecarErrorEnvelope, mapSidecarError } from "./sidecar-errors";
 
 export type {
 	ToolContext,
@@ -21,6 +28,8 @@ export type {
 	ClassifyResult,
 	SidecarRequest,
 	SidecarResponse,
+	SidecarErrorEnvelope,
+	SidecarErrorStage,
 	Logger,
 	LogLevel,
 } from "./types";

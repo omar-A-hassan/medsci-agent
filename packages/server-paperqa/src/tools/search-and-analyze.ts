@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { PythonSidecar, defineTool } from "@medsci/core";
+import { PythonSidecar, defineTool, mapSidecarError } from "@medsci/core";
 import { z } from "zod";
 
 // Initialize a dedicated sidecar purely for the PaperQA server
@@ -11,34 +11,42 @@ const pqaSidecarPath = join(import.meta.dir, "../../python/paperqa_server.py");
 export const pqaSidecar = new PythonSidecar({
 	scriptPath: pqaSidecarPath,
 	pythonBin: join(import.meta.dir, "../../.venv-paperqa/bin/python3"),
-	timeoutMs: 120_000, // 2 minutes due to heavy PDF parsing/ranking
+	timeoutMs: 150_000, // runtime-adjusted per request in execute()
 });
 
-// Explicit IPC Error Mapper (Issue 3 resolution from Blueprint)
-function mapPaperQaError(error: any): string {
-	const msg = String(error);
+const PAPERQA_ERROR_MAP: Record<string, string> = {
+	OLLAMA_UNREACHABLE:
+		"Failed to connect to the local inference server (Ollama). Check if it is running.",
+	MODEL_NOT_FOUND:
+		"Configured local model was not found in Ollama. Pull the model or update PQA_LLM_MODEL/PQA_EMBEDDING_MODEL.",
+	EMBEDDING_BAD_REQUEST:
+		"Embedding request was rejected by the local model endpoint. Verify embedding model compatibility.",
+	ACQUIRE_NONE_SUCCESS:
+		"Could not acquire text for any requested papers from PMC Open Access/PubMed.",
+	INDEX_ZERO_SUCCESS:
+		"Paper acquisition succeeded, but indexing failed for all papers. Check local model and embedding configuration.",
+	QUERY_TIMEOUT:
+		"LLM query timed out. Consider increasing PQA_LLM_TIMEOUT_SECONDS or reducing PQA_EVIDENCE_K/PQA_ANSWER_MAX_SOURCES.",
+	QUERY_RATE_LIMIT:
+		"LLM endpoint rate-limited the request. Wait a moment and retry.",
+};
 
-	if (msg.includes("RateLimitExceeded")) {
-		return "API rate limit reached (likely Semantic Scholar). Wait and retry with fewer papers.";
-	}
-	if (msg.includes("TantivyLockError")) {
-		return "Tantivy index is locked by another process. The previous agent request may still be indexing.";
-	}
-	if (msg.includes("pdfminer.pdfparser.PDFSyntaxError")) {
-		return "One of the provided PDFs is malformed or corrupted and cannot be indexed.";
-	}
-	if (msg.includes("OutOfMemory") || msg.includes("OOM")) {
-		return "Out of memory error during indexing. Please submit max 3 papers at a time.";
-	}
-	if (msg.includes("LLMConnectionError")) {
-		return "Failed to connect to the local inference server (Ollama). Check if it is running.";
-	}
-	if (msg.includes("ConnectError") || msg.includes("NCBI")) {
-		return "Failed to reach NCBI APIs. Check network connectivity.";
-	}
+/**
+ * Compute sidecar timeout enforcing: LLM timeout < sidecar timeout < MCP timeout (600s).
+ *
+ * - baseMs: scales with paper count (120s + 30s/paper, capped at 420s)
+ * - llmBudgetMs: LLM timeout + 45s headroom for acquire/index overhead
+ * - Result: max of both, capped at 540s (leaving 60s margin below MCP's 600s)
+ */
+export function computeTimeoutMs(paperCount: number): number {
+	const baseMs = Math.min(420_000, 120_000 + Math.max(0, paperCount) * 30_000);
+	const llmTimeoutSec = Number(process.env.PQA_LLM_TIMEOUT_SECONDS) || 180;
+	const llmBudgetMs = (llmTimeoutSec + 45) * 1000;
+	return Math.min(540_000, Math.max(baseMs, llmBudgetMs));
+}
 
-	// Fallback map
-	return `PaperQA Agent Error: ${msg}`;
+function mapPaperQaError(error: unknown): string {
+	return mapSidecarError(error, PAPERQA_ERROR_MAP, "PaperQA Agent Error");
 }
 
 export const searchAndAnalyzeTool = defineTool({
@@ -79,6 +87,8 @@ export const searchAndAnalyzeTool = defineTool({
 	}),
 	execute: async (input, ctx) => {
 		try {
+			pqaSidecar.setTimeoutMs(computeTimeoutMs(input.papers.length));
+
 			if (!pqaSidecar.isRunning()) {
 				await pqaSidecar.start();
 			}

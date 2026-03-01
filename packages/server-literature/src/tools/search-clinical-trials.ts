@@ -1,5 +1,9 @@
-import { defineTool, interpretWithMedGemma } from "@medsci/core";
-import { resilientFetch } from "@medsci/core/src/utils";
+import {
+	defineTool,
+	interpretWithMedGemma,
+	resilientFetch,
+	withOptionalSynthesis,
+} from "@medsci/core";
 import { z } from "zod";
 
 const CT_BASE = "https://clinicaltrials.gov/api/v2";
@@ -80,23 +84,21 @@ export const searchClinicalTrials = defineTool({
 			results,
 		};
 
-		if (!input.needs_synthesized_summary) {
-			return {
-				success: true,
-				data: { ...trialData, interpretation: "", model_used: false },
-			};
-		}
-
-		const { interpretation, model_used } = await interpretWithMedGemma(
-			ctx,
-			results,
-			`Summarize the clinical trial landscape for "${input.query}". ` +
-				"What phases are most represented? Any notable trends in study design or endpoints?",
+		const data = await withOptionalSynthesis(
+			input.needs_synthesized_summary ?? true,
+			trialData,
+			() =>
+				interpretWithMedGemma(
+					ctx,
+					results,
+					`Summarize the clinical trial landscape for "${input.query}". ` +
+						"What phases are most represented? Any notable trends in study design or endpoints?",
+				),
 		);
 
 		return {
 			success: true,
-			data: { ...trialData, interpretation, model_used },
+			data,
 		};
 	},
 });

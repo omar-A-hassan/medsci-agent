@@ -109,10 +109,33 @@ export interface SidecarRequest {
 	args: Record<string, unknown>;
 }
 
+export type SidecarErrorStage =
+	| "acquire"
+	| "index"
+	| "query"
+	| "startup"
+	| "ipc"
+	| "unknown";
+
+export interface SidecarErrorEnvelope {
+	error_code?: string;
+	error_message?: string;
+	error_stage?: SidecarErrorStage;
+	error_detail?: string;
+	traceback?: string;
+	retryable?: boolean;
+}
+
 export interface SidecarResponse {
 	id: string;
 	result?: unknown;
 	error?: string;
+	error_code?: string;
+	error_message?: string;
+	error_stage?: SidecarErrorStage;
+	error_detail?: string;
+	traceback?: string;
+	retryable?: boolean;
 }
 
 // ---------------------------------------------------------------------------

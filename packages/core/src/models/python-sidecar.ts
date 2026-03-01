@@ -1,21 +1,17 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import { type Interface, createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
 import { createLogger } from "../logger";
+import {
+	type PythonSidecarOptions,
+	resolvePythonSidecarOptions,
+} from "./python-sidecar-bootstrap";
 import type {
+	SidecarErrorEnvelope,
 	PythonSidecarInterface,
 	SidecarRequest,
 	SidecarResponse,
 } from "../types";
-
-const SIDECAR_SCRIPT = fileURLToPath(
-	new URL("../../python/sidecar.py", import.meta.url),
-);
-
-// Project root derived from sidecar script location (packages/core/python/sidecar.py → ../../..)
-const PROJECT_ROOT = path.resolve(path.dirname(SIDECAR_SCRIPT), "../../..");
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
@@ -33,36 +29,31 @@ export class PythonSidecar implements PythonSidecarInterface {
 		{ resolve: (v: unknown) => void; reject: (e: Error) => void }
 	>();
 	private log = createLogger("python-sidecar");
-	private preloadLibs: string[];
 	private timeoutMs: number;
 	private scriptPath: string;
-	private customPythonBin: string | undefined;
+	private pythonBin: string;
+	private preloadLibs: string[];
 
-	constructor(opts?: {
-		scriptPath?: string;
-		pythonBin?: string;
-		preloadLibs?: string[];
-		timeoutMs?: number;
-	}) {
-		this.preloadLibs = opts?.preloadLibs ?? [];
-		this.timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-		this.scriptPath = opts?.scriptPath ?? SIDECAR_SCRIPT;
-		this.customPythonBin = opts?.pythonBin;
+	constructor(opts?: PythonSidecarOptions) {
+		const resolved = resolvePythonSidecarOptions(opts, DEFAULT_TIMEOUT_MS);
+		this.preloadLibs = resolved.preloadLibs;
+		this.timeoutMs = resolved.timeoutMs;
+		this.scriptPath = resolved.scriptPath;
+		this.pythonBin = resolved.pythonBin;
 	}
 
 	isRunning(): boolean {
 		return this.proc !== null && this.proc.exitCode === null;
 	}
 
+	setTimeoutMs(timeoutMs: number): void {
+		this.timeoutMs = timeoutMs;
+	}
+
 	async start(): Promise<void> {
 		if (this.isRunning()) return;
 
-		const rawPython =
-			this.customPythonBin ?? process.env.MEDSCI_PYTHON ?? "python3";
-		const pythonBin = rawPython.startsWith("/")
-			? rawPython
-			: path.resolve(PROJECT_ROOT, rawPython);
-		this.proc = spawn(pythonBin, [this.scriptPath], {
+		this.proc = spawn(this.pythonBin, [this.scriptPath], {
 			stdio: ["pipe", "pipe", "pipe"],
 			env: {
 				...process.env,
@@ -70,7 +61,7 @@ export class PythonSidecar implements PythonSidecarInterface {
 			},
 		});
 
-		this.proc.on("exit", (code) => {
+		(this.proc as any).on("exit", (code: number | null) => {
 			this.log.warn(`sidecar exited with code ${code}`);
 			// Reject all pending requests
 			for (const [id, { reject }] of this.pending) {
@@ -88,7 +79,7 @@ export class PythonSidecar implements PythonSidecarInterface {
 
 		// Read line-delimited JSON responses from stdout
 		this.rl = createInterface({ input: this.proc.stdout! });
-		this.rl.on("line", (line: string) => {
+		(this.rl as any).on("line", (line: string) => {
 			try {
 				const resp: SidecarResponse = JSON.parse(line);
 				const entry = this.pending.get(resp.id);
@@ -97,8 +88,8 @@ export class PythonSidecar implements PythonSidecarInterface {
 					return;
 				}
 				this.pending.delete(resp.id);
-				if (resp.error) {
-					entry.reject(new Error(resp.error));
+				if (resp.error || resp.error_message || resp.error_code) {
+					entry.reject(this.buildSidecarError(resp));
 				} else {
 					entry.resolve(resp.result);
 				}
@@ -164,6 +155,22 @@ export class PythonSidecar implements PythonSidecarInterface {
 			}
 			throw err;
 		}
+	}
+
+	private buildSidecarError(resp: SidecarResponse): Error {
+		const envelope: SidecarErrorEnvelope = {
+			error_code: resp.error_code,
+			error_message: resp.error_message ?? resp.error,
+			error_stage: resp.error_stage ?? "unknown",
+			error_detail: resp.error_detail,
+			traceback: resp.traceback,
+			retryable: resp.retryable,
+		};
+
+		const message = envelope.error_message ?? "Unknown sidecar error";
+		const err = new Error(message);
+		(err as any).sidecar = envelope;
+		return err;
 	}
 
 	async stop(): Promise<void> {

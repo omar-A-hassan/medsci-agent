@@ -112,7 +112,7 @@ The **Python sidecar** is a long-running process that pre-imports scientific lib
 | `fetch_abstract` | Fetch full abstract and metadata by PMID | NCBI E-utilities + MedGemma |
 | `search_openalex` | Search OpenAlex for scholarly works, citations, open access status | OpenAlex API + MedGemma |
 | `search_clinical_trials` | Search ClinicalTrials.gov by condition, drug, or intervention | ClinicalTrials.gov API + MedGemma |
-| `search_and_analyze` | Deep semantic synthesis of up to 10 full-text PDFs using contextual LLM re-ranking | PaperQA2 + Tantivy |
+| `search_and_analyze` | Deep semantic synthesis of up to 10 papers (full text via NCBI BioC API, abstract fallback) using contextual LLM re-ranking | PaperQA2 + Tantivy |
 
 ### Medical Imaging (server-imaging)
 
@@ -151,7 +151,7 @@ bun install
 
 ### 2. Python environments
 
-The system uses two strictly decoupled Python virtual environments to prevent heavy machine-learning OCR models from bloating the core agent if you do not want to use PDF Analysis.
+The system uses two strictly decoupled Python virtual environments to prevent heavy machine-learning dependencies from bloating the core agent if you do not want to use deep literature synthesis.
 
 **Core Environment (Required):**
 ```bash
@@ -228,7 +228,21 @@ Environment variables (set in `opencode.json` under each server's `environment`)
 | `PQA_LLM_MODEL` | `ollama/medgemma:latest` | LLM model PaperQA uses for summarization/answering (litellm format) |
 | `PQA_EMBEDDING_MODEL` | `ollama/mxbai-embed-large` | Embedding model PaperQA uses for document indexing |
 | `PQA_OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint for PaperQA (separate from core) |
-| `PQA_EMAIL` | `medsci-agent@localhost` | Email for Unpaywall API access (open-access PDF downloads) |
+| `PQA_EMAIL` | `medsci-agent@localhost` | Email for NCBI API access (required by NCBI usage policy) |
+| `PQA_USE_DOC_DETAILS` | `false` | If `true`, enables PaperQA metadata inference during indexing (less reliable with local models) |
+| `PQA_CHUNK_CHARS` | `1200` | Default chunk size (characters) for PaperQA document reader before embedding |
+| `PQA_CHUNK_OVERLAP` | `100` | Overlap (characters) between adjacent chunks |
+| `PQA_CHUNK_MIN_CHARS` | `400` | Lower bound for automatic chunk-size backoff retries on embedding context errors |
+| `PQA_CHUNK_BACKOFF_RETRIES` | `3` | Number of times to retry indexing with smaller chunks on embed context-limit errors |
+| `PQA_ACQUIRE_CONCURRENCY` | `3` | Max concurrent NCBI acquisition requests in PaperQA |
+| `PQA_MAX_TEXT_CHARS` | `1500000` | Hard cap on acquired paper text size (chars) to avoid indexing blowups |
+| `PQA_NEGATIVE_CACHE_TTL_HOURS` | `24` | TTL for acquisition negative-cache entries (failed sources) |
+| `PQA_LLM_TIMEOUT_SECONDS` | `180` | Timeout (seconds) for LLM and summary LLM requests via LiteLLM. Sidecar timeout auto-adjusts above this. |
+| `PQA_ANSWER_MAX_SOURCES` | `5` | Maximum number of sources PaperQA includes in a synthesized answer |
+| `PQA_EVIDENCE_K` | `10` | Number of evidence chunks PaperQA gathers before answering |
+| `PQA_DOCSET_CACHE_MAX_ENTRIES` | `8` | Max number of in-memory docset cache entries per workspace |
+| `PQA_DOCSET_CACHE_MAX_BYTES` | `209715200` | Max total bytes for in-memory docset cache (default 200 MB) |
+| `PQA_SKIP_PREFLIGHT` | `false` | If `true`, skip Ollama model reachability/model-presence preflight checks |
 
 The `MEDSCI_PROFILE` setting controls which Python libraries are pre-imported when the sidecar starts. All tools work regardless of profile — the sidecar imports libraries lazily on first use — but pre-importing avoids a cold-start delay on the first call.
 
@@ -239,15 +253,19 @@ The `MEDSCI_PROFILE` setting controls which Python libraries are pre-imported wh
 | `full` | All available | Fastest first-call latency across all tools |
 
 ### PaperQA Data Nuances
-When querying deep PDFs via `server-paperqa`, the tool performs a multi-step pipeline:
-1. **PDF Download** — Papers are fetched via Unpaywall (DOIs) or PubMed Central (PMIDs) into `.opencode/pqa_papers/`.
-2. **Indexing** — PaperQA2 parses PDFs and builds a search index in `.opencode/pqa_index/`.
+When querying papers via `server-paperqa`, the tool performs a multi-step pipeline:
+1. **Text Acquisition** — Full-text articles are acquired via the NCBI BioC PMC API (DOIs, PMIDs, or PMCIDs). Papers not in PMC Open Access fall back to abstract-only via the BioC PubMed API. Acquired text is cached as `.txt` files in `.opencode/pqa_papers/`.
+2. **Indexing** — PaperQA2 indexes the text files and builds a search index in `.opencode/pqa_index/`.
 3. **RAG Synthesis** — The query runs against indexed chunks using Ollama for both summarization and final answer generation.
 
 - **Models**: PaperQA uses `PQA_LLM_MODEL` (default: `ollama/medgemma:latest`) for summarization and answering, and `PQA_EMBEDDING_MODEL` (default: `ollama/mxbai-embed-large`) for document embeddings. Both run locally via Ollama.
+- **Preflight**: The sidecar verifies Ollama reachability and required model presence before indexing/query. Failures return structured codes (`OLLAMA_UNREACHABLE`, `MODEL_NOT_FOUND`).
 - **Agent Type**: Uses `"fake"` agent mode (deterministic search → gather evidence → answer path) rather than an LLM-driven agent, which reduces token usage.
 - **Paper Limits**: The `search_and_analyze` schema strictly bounds processing to `max_papers=10` per call to avoid Out-of-Memory crashes.
-- **Open Access Only**: PDF downloads rely on Unpaywall and PMC. Papers behind paywalls will fail to download — the tool will report which papers it couldn't fetch.
+- **PMC Open Access Coverage**: Full-text retrieval requires papers to be in the PMC Open Access subset (~3.5M articles). Papers outside this subset get abstract-only indexing — the response includes an `acquisition_summary` showing which papers were full-text vs abstract-only.
+- **Stage-Gated Responses**: `search_and_analyze` now returns `stage_status` (`acquire`, `index`, `query`) and fail-soft terminal codes (`ACQUIRE_NONE_SUCCESS`, `INDEX_ZERO_SUCCESS`) instead of opaque failures.
+- **Embedding Context Guardrail**: Indexing now uses conservative chunk defaults and automatic chunk-size backoff retries when Ollama embedding rejects large inputs (`/api/embed` context-limit errors).
+- **Caching**: Paper acquisition uses canonicalized identifier hashing + manifests. Index/query path includes in-memory docset cache and persisted manifests under `.opencode/pqa_index/manifest.json`.
 - **Stateful Indexes**: Do **not** manually delete `.opencode/pqa_index/` or `.opencode/pqa_papers/` while a PaperQA query is in progress.
 
 ---
@@ -265,7 +283,7 @@ medsci-agent/
     server-literature/  Literature search MCP server
     server-imaging/     Medical imaging MCP server
     server-omics/       Single-cell and omics MCP server
-    server-paperqa/     Deep literature PDF synthesis MCP server
+    server-paperqa/     Deep literature synthesis MCP server (NCBI BioC text acquisition)
   .opencode/
     agents/             Agent definitions (orchestrator + 4 domain specialists + PaperQA routing)
     skills/             Skill definitions for OpenCode
@@ -280,7 +298,7 @@ This project builds on the following work:
 
 - **Prompt Repetition** ([Leviathan, Kalman & Matias, 2025](https://arxiv.org/abs/2512.14982)) — Our `interpretWithMedGemma` function repeats the instruction after the data context to improve non-reasoning model accuracy.
 - **TxGemma** ([Wang, Schmidgall, Jaeger et al., 2025](https://arxiv.org/abs/2504.06196)) — ADMET prediction uses verbatim prompt templates from Google's TxGemma, trained on [Therapeutics Data Commons](https://tdcommons.ai) benchmarks.
-- **PaperQA2** ([Future-House/paper-qa](https://github.com/Future-House/paper-qa)) — Deep literature synthesis and RAG for biomedical PDFs is powered by FutureHouse's PaperQA2 library.
+- **PaperQA2** ([Future-House/paper-qa](https://github.com/Future-House/paper-qa)) — Deep literature synthesis and RAG is powered by FutureHouse's PaperQA2 library, with text acquired via NCBI's BioC API.
 - **K-Dense Scientific Skills** ([K-Dense-AI/claude-scientific-skills](https://github.com/K-Dense-AI/claude-scientific-skills)) — The OpenCode skills in this project are adapted from K-Dense AI's open-source collection of 147+ scientific skills for AI agents.
 
 ---

@@ -1,5 +1,9 @@
-import { defineTool, interpretWithMedGemma } from "@medsci/core";
-import { resilientFetch } from "@medsci/core/src/utils";
+import {
+	defineTool,
+	interpretWithMedGemma,
+	resilientFetch,
+	withOptionalSynthesis,
+} from "@medsci/core";
 import { z } from "zod";
 
 const OPENALEX_BASE = "https://api.openalex.org";
@@ -79,27 +83,25 @@ export const searchOpenAlex = defineTool({
 			results,
 		};
 
-		if (!input.needs_synthesized_summary) {
-			return {
-				success: true,
-				data: { ...openalexData, interpretation: "", model_used: false },
-			};
-		}
-
-		const { interpretation, model_used } = await interpretWithMedGemma(
-			ctx,
-			results.map((r: any) => ({
-				title: r.title,
-				journal: r.journal,
-				cited_by_count: r.cited_by_count,
-			})),
-			`Synthesize the research landscape for "${input.query}" from these scholarly works. ` +
-				"What are the dominant themes, highly-cited findings, and emerging trends?",
+		const data = await withOptionalSynthesis(
+			input.needs_synthesized_summary ?? true,
+			openalexData,
+			() =>
+				interpretWithMedGemma(
+					ctx,
+					results.map((r: any) => ({
+						title: r.title,
+						journal: r.journal,
+						cited_by_count: r.cited_by_count,
+					})),
+					`Synthesize the research landscape for "${input.query}" from these scholarly works. ` +
+						"What are the dominant themes, highly-cited findings, and emerging trends?",
+				),
 		);
 
 		return {
 			success: true,
-			data: { ...openalexData, interpretation, model_used },
+			data,
 		};
 	},
 });

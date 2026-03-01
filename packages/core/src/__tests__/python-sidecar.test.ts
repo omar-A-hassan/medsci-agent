@@ -102,4 +102,22 @@ describe("PythonSidecar", () => {
 		expect(attempts).toBe(2);
 		expect(result).toEqual({ fake: "success" });
 	});
+
+	test("builds typed sidecar errors with envelope metadata", () => {
+		const resp = {
+			id: "abc",
+			error: "failure",
+			error_code: "MODEL_NOT_FOUND",
+			error_message: "Model missing",
+			error_stage: "startup",
+			retryable: false,
+			traceback: "tb",
+		};
+
+		const err = (sidecar as any).buildSidecarError(resp);
+		expect(err).toBeInstanceOf(Error);
+		expect((err as any).sidecar.error_code).toBe("MODEL_NOT_FOUND");
+		expect((err as any).sidecar.error_stage).toBe("startup");
+		expect((err as any).sidecar.retryable).toBe(false);
+	});
 });

@@ -1,5 +1,9 @@
-import { defineTool, interpretWithMedGemma } from "@medsci/core";
-import { resilientFetch } from "@medsci/core/src/utils";
+import {
+	defineTool,
+	interpretWithMedGemma,
+	resilientFetch,
+	withOptionalSynthesis,
+} from "@medsci/core";
 import { z } from "zod";
 import { EUTILS_BASE } from "../constants";
 
@@ -93,23 +97,21 @@ export const searchPubmed = defineTool({
 			articles,
 		};
 
-		if (!input.needs_synthesized_summary) {
-			return {
-				success: true,
-				data: { ...pubmedData, interpretation: "", model_used: false },
-			};
-		}
-
-		const { interpretation, model_used } = await interpretWithMedGemma(
-			ctx,
-			articles.map((a) => ({ title: a.title, journal: a.journal })),
-			`Synthesize the key themes and findings from these PubMed results for "${input.query}". ` +
-				"What are the main research trends? Any consensus or conflicting findings?",
+		const data = await withOptionalSynthesis(
+			input.needs_synthesized_summary ?? true,
+			pubmedData,
+			() =>
+				interpretWithMedGemma(
+					ctx,
+					articles.map((a) => ({ title: a.title, journal: a.journal })),
+					`Synthesize the key themes and findings from these PubMed results for "${input.query}". ` +
+						"What are the main research trends? Any consensus or conflicting findings?",
+				),
 		);
 
 		return {
 			success: true,
-			data: { ...pubmedData, interpretation, model_used },
+			data,
 		};
 	},
 });

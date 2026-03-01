@@ -1,5 +1,9 @@
-import { defineTool, interpretWithMedGemma } from "@medsci/core";
-import { resilientFetch } from "@medsci/core/src/utils";
+import {
+	defineTool,
+	interpretWithMedGemma,
+	resilientFetch,
+	withOptionalSynthesis,
+} from "@medsci/core";
 import { z } from "zod";
 import { EUTILS_BASE } from "../constants";
 
@@ -60,23 +64,21 @@ export const fetchAbstract = defineTool({
 			mesh_terms: meshTerms.slice(0, 20),
 		};
 
-		if (!input.needs_synthesized_summary) {
-			return {
-				success: true,
-				data: { ...articleData, interpretation: "", model_used: false },
-			};
-		}
-
-		const { interpretation, model_used } = await interpretWithMedGemma(
-			ctx,
-			{ title, abstract },
-			"Extract the key findings, methods, and clinical relevance from this article. " +
-				"Highlight any novel contributions and potential impact on patient care.",
+		const data = await withOptionalSynthesis(
+			input.needs_synthesized_summary ?? true,
+			articleData,
+			() =>
+				interpretWithMedGemma(
+					ctx,
+					{ title, abstract },
+					"Extract the key findings, methods, and clinical relevance from this article. " +
+						"Highlight any novel contributions and potential impact on patient care.",
+				),
 		);
 
 		return {
 			success: true,
-			data: { ...articleData, interpretation, model_used },
+			data,
 		};
 	},
 });

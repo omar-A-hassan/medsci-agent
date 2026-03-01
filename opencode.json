@@ -86,7 +86,9 @@
         "MEDSCI_PYTHON": ".venv-paperqa/bin/python3",
         "PQA_LLM_MODEL": "ollama/medgemma:latest",
         "PQA_EMBEDDING_MODEL": "ollama/mxbai-embed-large",
-        "PQA_OLLAMA_URL": "http://localhost:11434"
+        "PQA_OLLAMA_URL": "http://localhost:11434",
+        "PQA_LLM_TIMEOUT_SECONDS": "480",
+        "PQA_EVIDENCE_K": "5"
       }
     }
   }

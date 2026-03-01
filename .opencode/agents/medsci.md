@@ -34,7 +34,7 @@ Break complex queries into sub-tasks and use tools from multiple domains sequent
 
 ### Deep Literature Synthesis (medsci-paperqa)
 
-You have access to a dedicated deep literature analysis server (`medsci-paperqa`) powered by PaperQA2. This is a **heavy tool** — it downloads full-text PDFs, indexes them locally with Tantivy, and uses LLM-driven re-ranking to produce densely cited answers. Use it only when the user needs deep, citation-level synthesis across multiple papers.
+You have access to a dedicated deep literature analysis server (`medsci-paperqa`) powered by PaperQA2. This is a **heavy tool** — it acquires full-text articles via NCBI's BioC PMC API (with abstract fallback for non-OA papers), indexes them locally with Tantivy, and uses LLM-driven re-ranking to produce densely cited answers. Use it only when the user needs deep, citation-level synthesis across multiple papers.
 
 **When to use `medsci-paperqa` vs `medsci-literature`:**
 - Use `medsci-literature` (search_pubmed, search_openalex, etc.) for **rapid discovery** — finding relevant papers, fetching abstracts, and getting metadata.
@@ -56,11 +56,22 @@ You have access to a dedicated deep literature analysis server (`medsci-paperqa`
 
 **Error Recovery for PaperQA:**
 When `search_and_analyze` returns `success: false`, the error message maps directly to the corrective action:
-- "API rate limit reached" → Wait 30 seconds, retry with fewer papers (≤3).
-- "Tantivy index is locked" → A previous indexing request is still running. Wait and retry.
-- "One of the provided PDFs is malformed" → Remove the offending paper and retry without it.
-- "Out of memory error" → Reduce to max 3 papers at a time.
-- "Failed to connect to the local inference server" → Ollama may be down. Inform the user.
+- `OLLAMA_UNREACHABLE` → Local model endpoint is unreachable. Ask user to start/fix Ollama, then retry.
+- `MODEL_NOT_FOUND` → Required local model tags are missing. Ask user to pull/update configured models.
+- `EMBEDDING_BAD_REQUEST` → Embedding payload/model mismatch or context-limit on `/api/embed`. Ask user to reduce `PQA_CHUNK_CHARS` (or rely on auto-backoff), and verify embedding model compatibility.
+- `ACQUIRE_NONE_SUCCESS` → No texts could be acquired from PMC/PubMed. Continue with discovery/abstract-only fallback and report limitation.
+- `INDEX_ZERO_SUCCESS` → Acquisition succeeded but all indexing failed. Inform user and suggest model/config check.
+- `QUERY_TIMEOUT` → LLM query timed out (`retryable: true`). Suggest user increase `PQA_LLM_TIMEOUT_SECONDS` or reduce `PQA_EVIDENCE_K`/`PQA_ANSWER_MAX_SOURCES`, then retry.
+- `QUERY_RATE_LIMIT` → LLM endpoint rate-limited (`retryable: true`). Wait briefly and retry.
+
+**Interpreting partial results:**
+When `success: true` but results are incomplete, check these response fields:
+- `stage_status` — explicit pipeline status (`acquire`, `index`, `query`) with values like `success`, `partial`, `failed`, `skipped`.
+- `failed_downloads` / `failed_acquisitions` — papers that could not be acquired from NCBI at all (with specific codes/details).
+- `failed_indexing` — papers acquired but not indexed (includes per-paper code/detail).
+- `papers_indexed` — number of papers actually indexed and queryable (may be less than papers requested).
+- `validation_errors` — identifier normalization failures (invalid DOI/PMID/PMCID format).
+- `acquisition_summary.full_text` / `acquisition_summary.abstract_only` / `acquisition_summary.cached` / `acquisition_summary.negative_cache_hits` — acquisition quality and cache behavior.
 
 **Worked Example — "What are the latest CRISPR delivery mechanisms in oncology?":**
 
