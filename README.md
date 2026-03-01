@@ -17,7 +17,7 @@
 
 [![MedSci Agent running a single-cell RNA-seq pipeline in OpenCode](docs/demo.png)](https://www.kaggle.com/competitions/med-gemma-impact-challenge)
 
-MedSci Agent gives any LLM access to 20 biomedical research tools — drug ADMET prediction, protein structure search, single-cell RNA-seq analysis, medical image interpretation, and literature search — all powered by [MedGemma](https://huggingface.co/google/medgemma-4b-it), [TxGemma](https://huggingface.co/google/txgemma-2b-predict) running locally via Ollama, and [OpenCode](https://opencode.ai). No data leaves your machine.
+MedSci Agent gives any LLM access to 21 biomedical research tools — drug ADMET prediction, protein structure search, single-cell RNA-seq analysis, medical image interpretation, and literature search — all powered by [MedGemma](https://huggingface.co/google/medgemma-4b-it), [TxGemma](https://huggingface.co/google/txgemma-2b-predict) running locally via Ollama, and [OpenCode](https://opencode.ai). No data leaves your machine.
 
 Built for the [MedGemma Impact Challenge](https://www.kaggle.com/competitions/med-gemma-impact-challenge).
 
@@ -49,7 +49,7 @@ The Agent automatically selects the right tools, calls MedGemma for interpretati
 
 ## Architecture
 
-You bring your own LLM. Configure any model in OpenCode (via `/model`) and it becomes the orchestrator — it reads your query, selects the right tools, calls them through MCP, and synthesizes the results. The 5 MCP servers handle the domain logic underneath.
+You bring your own LLM. Configure any model in OpenCode (via `/model`) and it becomes the orchestrator — it reads your query, selects the right tools, calls them through MCP, and synthesizes the results. The 6 MCP servers handle the domain logic underneath.
 
 ```
 Cloud LLM (user's choice via OpenCode)
@@ -162,19 +162,21 @@ pip install -r requirements.txt
 
 **PaperQA Environment (Optional, for deep literature synthesis):**
 ```bash
+cd packages/server-paperqa
 python3 -m venv .venv-paperqa
 source .venv-paperqa/bin/activate
-pip install -r packages/server-paperqa/requirements.txt
+pip install -r requirements.txt
+cd ../..
 ```
 
-> **Important:** Set `MEDSCI_PYTHON` appropriately in your `opencode.json` server environment blocks (e.g., `.venv/bin/python3` for core tools and `.venv-paperqa/bin/python3` for `server-paperqa`). Without this, the Python sidecar will use your system Python.
+> **Important:** Set `MEDSCI_PYTHON` to `.venv/bin/python3` in your `opencode.json` server environment blocks for core tools. The PaperQA server manages its own Python binary internally — it always uses `packages/server-paperqa/.venv-paperqa/bin/python3`.
 
 ### 3. Pull Ollama models
 
 ```bash
-ollama pull medgemma:latest
-ollama pull mxbai-embed-large
-ollama pull hf.co/matrixportalx/txgemma-2b-predict-GGUF:Q4_K_M
+ollama pull medgemma:latest                                      # Biomedical interpretation
+ollama pull mxbai-embed-large                                    # Document embeddings for PaperQA
+ollama pull hf.co/matrixportalx/txgemma-2b-predict-GGUF:Q4_K_M  # ADMET prediction
 ```
 
 If `medgemma:latest` is not available directly, pull the GGUF from HuggingFace and alias it:
