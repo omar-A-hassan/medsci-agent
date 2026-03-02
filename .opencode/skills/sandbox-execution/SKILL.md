@@ -15,7 +15,7 @@ description: "Isolated exploratory code execution with medsci-sandbox tools. Use
 ```
 1. Prepare sandbox  → sandbox_prepare(workspace_path, network_policy="deny")
 2. Run command      → sandbox_run_job(sandbox_name, command, timeout_sec)
-3. Check status     → sandbox_status(sandbox_name) [optional]
+3. Check status     → sandbox_status(sandbox_name) [optional/advisory]
 4. Fetch outputs    → sandbox_fetch_artifact(sandbox_name, artifact_path)
 5. Teardown         → sandbox_teardown(sandbox_name, remove=true|false)
 ```
@@ -23,8 +23,11 @@ description: "Isolated exploratory code execution with medsci-sandbox tools. Use
 ## Defaults and Guardrails
 - Default network policy: `deny`
 - Use explicit `timeout_sec` on every run job
+- Treat `sandbox_run_job` success/failure as source-of-truth for execution outcome
+- If `sandbox_status` is used, apply 1-2s retry/backoff before final state conclusion
 - Retrieve only required artifacts/logs
 - Prefer removing sandbox after one-off jobs (`remove=true`)
+- Prefer `python3` for inline script execution commands
 
 ## Failure Handling
 - `SANDBOX_TIMEOUT`: reduce scope or increase timeout

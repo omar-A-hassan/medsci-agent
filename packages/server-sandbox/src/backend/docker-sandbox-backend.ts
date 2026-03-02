@@ -41,9 +41,26 @@ import { SandboxError } from "./types";
 
 export class DockerSandboxBackend implements SandboxBackend {
 	private readonly run: CommandRunner;
+	private readonly statusRetryAttempts: number;
+	private readonly statusRetryBackoffMs: number;
 
 	constructor(commandRunner?: CommandRunner) {
 		this.run = commandRunner ?? defaultCommandRunner;
+		const configuredAttempts = Number(
+			process.env.MEDSCI_SANDBOX_STATUS_RETRY_ATTEMPTS,
+		);
+		const configuredBackoffMs = Number(
+			process.env.MEDSCI_SANDBOX_STATUS_RETRY_BACKOFF_MS,
+		);
+
+		this.statusRetryAttempts = Number.isFinite(configuredAttempts)
+			? Math.max(0, configuredAttempts)
+			: 2;
+		this.statusRetryBackoffMs = Number.isFinite(configuredBackoffMs)
+			? Math.max(0, configuredBackoffMs)
+			: commandRunner
+				? 0
+				: 1000;
 	}
 
 	// -----------------------------------------------------------------------
@@ -205,14 +222,31 @@ export class DockerSandboxBackend implements SandboxBackend {
 	// -----------------------------------------------------------------------
 
 	async status(input: StatusInput): Promise<StatusResult> {
-		const lsResult = await this.run(buildLsArgs());
-		const parsed = parseLsJson(lsResult.stdout);
-		const found = parsed.sandboxes.find((s) => s.name === input.sandbox_name);
+		for (let attempt = 0; attempt <= this.statusRetryAttempts; attempt++) {
+			const lsResult = await this.run(buildLsArgs());
+			const parsed = parseLsJson(lsResult.stdout);
+			const found = parsed.sandboxes.find((s) => s.name === input.sandbox_name);
+
+			if (found) {
+				return {
+					sandbox_name: input.sandbox_name,
+					exists: true,
+					status: normalizeStatus(found.status),
+				};
+			}
+
+			const isFinalAttempt = attempt === this.statusRetryAttempts;
+			if (!isFinalAttempt && this.statusRetryBackoffMs > 0) {
+				await new Promise((resolve) => {
+					setTimeout(resolve, this.statusRetryBackoffMs);
+				});
+			}
+		}
 
 		return {
 			sandbox_name: input.sandbox_name,
-			exists: !!found,
-			status: found ? normalizeStatus(found.status) : "unknown",
+			exists: false,
+			status: "unknown",
 		};
 	}
 

@@ -157,6 +157,35 @@ describe("DockerSandboxBackend", () => {
 		expect(result.status).toBe("running");
 	});
 
+	test("status retries and returns running once sandbox appears", async () => {
+		const runner = mock((_args: string[]) => {
+			if (runner.mock.calls.length <= 1) {
+				return Promise.resolve({
+					stdout: '{"sandboxes":[]}',
+					stderr: "",
+					exitCode: 0,
+					timedOut: false,
+				});
+			}
+
+			return Promise.resolve({
+				stdout: JSON.stringify({
+					sandboxes: [{ name: "sb", status: "running" }],
+				}),
+				stderr: "",
+				exitCode: 0,
+				timedOut: false,
+			});
+		}) as CommandRunner;
+
+		const backend = new DockerSandboxBackend(runner);
+		const result = await backend.status({ sandbox_name: "sb" });
+
+		expect(result.exists).toBe(true);
+		expect(result.status).toBe("running");
+		expect(runner.mock.calls.length).toBe(2);
+	});
+
 	test("teardown stops sandbox", async () => {
 		const runner = createMockRunner({
 			"sandbox stop": { exitCode: 0 },

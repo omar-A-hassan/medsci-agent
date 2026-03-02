@@ -102,13 +102,16 @@ Use `medsci-sandbox` when the user request requires custom/generated code execut
 **Sandbox workflow (strictly sequential):**
 1. `sandbox_prepare` with workspace path and default `network_policy=deny`
 2. `sandbox_run_job` with explicit command, timeout, and optional artifact root
-3. `sandbox_status` if needed for state verification
+3. `sandbox_status` if needed for state verification (advisory; tolerate short state-sync lag)
 4. `sandbox_fetch_artifact` to retrieve logs/outputs
 5. `sandbox_teardown` (optionally `remove=true`) after completion
 
 **Safety expectations:**
 - Keep network deny by default; only allow hosts when required.
 - Always set explicit timeouts for heavy jobs.
+- Treat successful `sandbox_run_job` execution as source-of-truth for job outcome.
+- When checking `sandbox_status`, use 1-2s retry/backoff before concluding missing/stopped state.
+- Default interpreter for inline scripts is `python3` (not `python`).
 - Treat sandbox artifacts as transient runtime outputs unless user asks to persist.
 
 ## Response Guidelines

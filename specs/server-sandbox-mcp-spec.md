@@ -182,6 +182,7 @@ Execute generated code or command in an existing sandbox and capture runtime out
 - Use a backend wrapper so timeout and exit code are deterministic.
 - No detached mode in initial version.
 - Synchronous execution only in v1.
+- Prompt/examples should default to `python3` for inline scripts.
 
 ---
 
@@ -208,6 +209,10 @@ Return high-level sandbox state.
 
 #### Command Mapping
 - `docker sandbox ls --json` and parse by sandbox name.
+
+#### Reliability Notes
+- Apply 1-2 second retry/backoff before concluding missing/unknown state.
+- Treat `sandbox_run_job` success/failure as source-of-truth for job execution outcomes.
 
 ---
 
