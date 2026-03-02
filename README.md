@@ -17,7 +17,7 @@
 
 [![MedSci Agent running a single-cell RNA-seq pipeline in OpenCode](docs/demo.png)](https://www.kaggle.com/competitions/med-gemma-impact-challenge)
 
-MedSci Agent gives any LLM access to 21 biomedical research tools — drug ADMET prediction, protein structure search, single-cell RNA-seq analysis, medical image interpretation, and literature search — all powered by [MedGemma](https://huggingface.co/google/medgemma-4b-it), [TxGemma](https://huggingface.co/google/txgemma-2b-predict) running locally via Ollama, and [OpenCode](https://opencode.ai). No data leaves your machine.
+MedSci Agent gives any LLM access to 26 biomedical and execution tools — drug ADMET prediction, protein structure search, single-cell RNA-seq analysis, medical image interpretation, literature search, and isolated sandbox execution — all powered by [MedGemma](https://huggingface.co/google/medgemma-4b-it), [TxGemma](https://huggingface.co/google/txgemma-2b-predict) running locally via Ollama, and [OpenCode](https://opencode.ai). No data leaves your machine.
 
 Built for the [MedGemma Impact Challenge](https://www.kaggle.com/competitions/med-gemma-impact-challenge).
 
@@ -64,6 +64,7 @@ Cloud LLM (user's choice via OpenCode)
 |  server-imaging     1 tool            |
 |  server-omics       5 tools           |
 |  server-paperqa     1 tool            |
+|  server-sandbox     5 tools           |
 |                                       |
 +-------+-------------------+-----------+
         |                   |
@@ -130,6 +131,16 @@ The **Python sidecar** is a long-running process that pre-imports scientific lib
 | `differential_expression` | Differential expression between groups (Wilcoxon, t-test, logreg) | Scanpy + MedGemma |
 | `gene_set_enrichment` | Pathway enrichment against MSigDB, GO, KEGG via Enrichr | Enrichr API + MedGemma |
 
+### Sandbox Execution (server-sandbox)
+
+| Tool | Description | Backend |
+|------|-------------|---------|
+| `sandbox_prepare` | Create/reuse a Docker sandbox with default `network_policy=deny` | Docker Sandbox CLI |
+| `sandbox_run_job` | Execute command in sandbox with deterministic timeout + logs | Docker Sandbox CLI |
+| `sandbox_status` | Check sandbox state (`running`/`stopped`/`unknown`) with retry/backoff | Docker Sandbox CLI |
+| `sandbox_fetch_artifact` | Read artifact/log content with size/path safety constraints | Host file access + safety checks |
+| `sandbox_teardown` | Stop or remove sandbox | Docker Sandbox CLI |
+
 ---
 
 ## Setup
@@ -140,6 +151,8 @@ The **Python sidecar** is a long-running process that pre-imports scientific lib
 - Python 3.10+ with a virtual environment
 - [Ollama](https://ollama.com)
 - [OpenCode](https://opencode.ai)
+- Docker Desktop / Docker Engine
+- Docker Sandbox CLI (`docker sandbox ...` commands available)
 
 ### 1. Clone and install
 
@@ -213,6 +226,36 @@ Make sure Ollama is running, then open the project directory in OpenCode. The MC
 
 ---
 
+## OpenCode Agent Usage
+
+### Built-in project commands
+
+This repo ships OpenCode slash commands under `.opencode/commands`:
+
+- `/triage` — classify request and propose minimal sequential MCP plan
+- `/lit-deep` — literature discovery + PaperQA deep synthesis workflow
+- `/sandbox-job` — sandbox lifecycle run (`prepare → run_job → status(advisory) → fetch → teardown`)
+- `/qc-check` — maker-checker quality gate on scientific outputs
+- `/handoff-report` — compact handoff for next agent/human
+
+### Sandbox command default
+
+For inline script execution, prefer:
+
+```bash
+python3 -c "print('sandbox smoke ok')"
+```
+
+instead of `python -c ...` to avoid environment-path variability across sandbox templates.
+
+### Determinism and status policy
+
+- Treat `sandbox_run_job` success/failure as source-of-truth for execution outcome.
+- Treat `sandbox_status` as advisory state signal.
+- Backend applies status retry/backoff before returning `unknown`.
+
+---
+
 ## Configuration
 
 Environment variables (set in `opencode.json` under each server's `environment`):
@@ -243,6 +286,34 @@ Environment variables (set in `opencode.json` under each server's `environment`)
 | `PQA_DOCSET_CACHE_MAX_ENTRIES` | `8` | Max number of in-memory docset cache entries per workspace |
 | `PQA_DOCSET_CACHE_MAX_BYTES` | `209715200` | Max total bytes for in-memory docset cache (default 200 MB) |
 | `PQA_SKIP_PREFLIGHT` | `false` | If `true`, skip Ollama model reachability/model-presence preflight checks |
+
+Sandbox-related environment variables (optional, `server-sandbox`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MEDSCI_SANDBOX_DEFAULT_TEMPLATE` | _unset_ | Optional default Docker sandbox template |
+| `MEDSCI_SANDBOX_PULL_TEMPLATE` | `missing` | Template pull policy: `missing`, `always`, `never` |
+| `MEDSCI_SANDBOX_ARTIFACT_ROOT` | `sandbox-artifacts` | Artifact root directory for run logs/metadata |
+| `MEDSCI_SANDBOX_DEFAULT_TIMEOUT_SEC` | `600` | Default run timeout (seconds) |
+| `MEDSCI_SANDBOX_MAX_TIMEOUT_SEC` | `3600` | Max allowed run timeout (seconds) |
+| `MEDSCI_SANDBOX_STATUS_RETRY_ATTEMPTS` | `2` | Number of status retries before returning `unknown` |
+| `MEDSCI_SANDBOX_STATUS_RETRY_BACKOFF_MS` | `1000` | Milliseconds between status retries |
+
+### OpenCode policy hardening (included)
+
+`opencode.json` includes baseline hardening:
+
+- `edit`, `task`, `skill`, `webfetch`, `external_directory`, `doom_loop` default to `ask`
+- `bash` allowlist for safe read-only/dev commands
+- `bash` denylist for destructive actions (`rm *`, `git push*`)
+- agent-specific task/skill permission scoping for `medsci`
+
+### Plugin guardrails (included)
+
+Project plugin: `.opencode/plugins/medsci-guardrails.ts`
+
+- Blocks reading sensitive `.env` files via the `read` tool (allows `.env.example`)
+- Logs tool telemetry (`tool`, `session_id`, `duration_ms`, `failed`) via `client.app.log`
 
 The `MEDSCI_PROFILE` setting controls which Python libraries are pre-imported when the sidecar starts. All tools work regardless of profile — the sidecar imports libraries lazily on first use — but pre-importing avoids a cold-start delay on the first call.
 
@@ -284,11 +355,26 @@ medsci-agent/
     server-imaging/     Medical imaging MCP server
     server-omics/       Single-cell and omics MCP server
     server-paperqa/     Deep literature synthesis MCP server (NCBI BioC text acquisition)
+    server-sandbox/     Isolated sandbox execution MCP server
   .opencode/
     agents/             Agent definitions (orchestrator + 4 domain specialists + PaperQA routing)
+    commands/           Reusable slash commands for MedSci workflows
+    plugins/            OpenCode plugin guardrails and telemetry hooks
     skills/             Skill definitions for OpenCode
   opencode.json         OpenCode configuration (model, MCP servers)
 ```
+
+---
+
+## Runtime Artifacts
+
+Sandbox runs generate runtime artifacts (for debugging and reproducibility), typically under `sandbox-artifacts/` or a configured artifact root:
+
+- `job-*/stdout.log`
+- `job-*/stderr.log`
+- `job-*/metadata.json`
+
+These are not source files and are safe to delete. Sandbox teardown removes containers; host-side artifacts remain unless explicitly pruned.
 
 ---
 
