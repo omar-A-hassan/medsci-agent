@@ -4,23 +4,52 @@ import { z } from "zod";
 const PDB_SEARCH_URL = "https://search.rcsb.org/rcsbsearch/v2/query";
 const PDB_DATA_URL = "https://data.rcsb.org/rest/v1/core/entry";
 
-export const searchPdb = defineTool({
+const schema = z.object({
+	query: z
+		.string()
+		.min(1)
+		.describe("Search query: protein name, gene, or PDB ID (e.g. '4HHB')"),
+	limit: z
+		.number()
+		.int()
+		.positive()
+		.max(25)
+		.optional()
+		.describe("Max results (default: 10)"),
+});
+
+interface PdbResultItem {
+	pdb_id: string;
+	title?: string;
+	method?: string;
+	resolution?: number;
+	release_date?: string;
+	polymer_count?: number;
+}
+
+interface PdbEntryResponse {
+	struct?: { title?: string };
+	exptl?: Array<{ method?: string }>;
+	rcsb_entry_info?: {
+		resolution_combined?: number[];
+		polymer_entity_count?: number;
+	};
+	rcsb_accession_info?: { initial_release_date?: string };
+}
+
+interface SearchPdbOutput {
+	query?: string;
+	n_results?: number;
+	results: PdbResultItem[];
+	interpretation: string;
+	model_used: boolean;
+}
+
+export const searchPdb = defineTool<z.infer<typeof schema>, SearchPdbOutput>({
 	name: "search_pdb",
 	description:
 		"Search the RCSB Protein Data Bank for 3D structures. Find structures by protein name, gene, organism, or PDB ID. Returns resolution, method, and ligand information.",
-	schema: z.object({
-		query: z
-			.string()
-			.min(1)
-			.describe("Search query: protein name, gene, or PDB ID (e.g. '4HHB')"),
-		limit: z
-			.number()
-			.int()
-			.positive()
-			.max(25)
-			.optional()
-			.describe("Max results (default: 10)"),
-	}),
+	schema,
 	execute: async (input, ctx) => {
 		const limit = input.limit ?? 10;
 
@@ -31,7 +60,7 @@ export const searchPdb = defineTool({
 				signal: AbortSignal.timeout(10_000),
 			});
 			if (res.ok) {
-				const entry = (await res.json()) as any;
+				const entry = (await res.json()) as PdbEntryResponse;
 				const directResult = [
 					{
 						pdb_id: pdbId,
@@ -46,8 +75,7 @@ export const searchPdb = defineTool({
 				const { interpretation, model_used } = await interpretWithMedGemma(
 					ctx,
 					directResult,
-					`Describe the structural significance of PDB entry ${pdbId}. ` +
-						"Comment on resolution quality, experimental method, and potential for structure-based drug design.",
+					`Describe the structural significance of PDB entry ${pdbId}. Comment on resolution quality, experimental method, and potential for structure-based drug design.`,
 				);
 
 				return {
@@ -94,17 +122,18 @@ export const searchPdb = defineTool({
 					const detailRes = await fetch(`${PDB_DATA_URL}/${pdbId}`, {
 						signal: AbortSignal.timeout(5_000),
 					});
-					if (!detailRes.ok) return { pdb_id: pdbId };
-					const entry = (await detailRes.json()) as any;
+					if (!detailRes.ok) return { pdb_id: pdbId, polymer_count: undefined };
+					const entry = (await detailRes.json()) as PdbEntryResponse;
 					return {
 						pdb_id: pdbId,
 						title: entry.struct?.title,
 						method: entry.exptl?.[0]?.method,
 						resolution: entry.rcsb_entry_info?.resolution_combined?.[0],
 						release_date: entry.rcsb_accession_info?.initial_release_date,
+						polymer_count: entry.rcsb_entry_info?.polymer_entity_count,
 					};
 				} catch {
-					return { pdb_id: pdbId };
+					return { pdb_id: pdbId, polymer_count: undefined };
 				}
 			}),
 		);
@@ -114,8 +143,7 @@ export const searchPdb = defineTool({
 		const { interpretation, model_used } = await interpretWithMedGemma(
 			ctx,
 			results,
-			`Assess the structural data for "${input.query}". ` +
-				"Comment on resolution quality, experimental methods, and druggability of the structures found.",
+			`Assess the structural data for "${input.query}". Comment on resolution quality, experimental methods, and druggability of the structures found.`,
 		);
 
 		return {

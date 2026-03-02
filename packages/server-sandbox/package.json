@@ -1,0 +1,18 @@
+{
+	"name": "@medsci/server-sandbox",
+	"version": "0.1.0",
+	"description": "MCP server for isolated sandbox execution via Docker Sandboxes CLI",
+	"main": "src/index.ts",
+	"scripts": {
+		"start": "bun run src/index.ts",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@medsci/core": "workspace:*",
+		"zod": "^3.24.0"
+	},
+	"devDependencies": {
+		"bun-types": "^1.1.0",
+		"typescript": "^5.7.0"
+	}
+}

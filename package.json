@@ -17,7 +17,8 @@
 		"server:protein": "bun run packages/server-protein/src/index.ts",
 		"server:imaging": "bun run packages/server-imaging/src/index.ts",
 		"server:literature": "bun run packages/server-literature/src/index.ts",
-		"server:paperqa": "bun run packages/server-paperqa/src/index.ts"
+		"server:paperqa": "bun run packages/server-paperqa/src/index.ts",
+		"server:sandbox": "bun run packages/server-sandbox/src/index.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.0",

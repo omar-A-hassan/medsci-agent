@@ -90,6 +90,18 @@
         "PQA_LLM_TIMEOUT_SECONDS": "480",
         "PQA_EVIDENCE_K": "5"
       }
+    },
+    "medsci-sandbox": {
+      "type": "local",
+      "command": [
+        "bun",
+        "run",
+        "packages/server-sandbox/src/index.ts"
+      ],
+      "timeout": 600000,
+      "environment": {
+        "MEDSCI_PROFILE": "standard"
+      }
     }
   }
 }

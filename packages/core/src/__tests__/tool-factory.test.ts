@@ -5,10 +5,16 @@ import type { ToolContext } from "../types";
 
 // --- Mock context factory ---
 function createMockContext(overrides?: Partial<ToolContext>): ToolContext {
+	const generateJson: ToolContext["ollama"]["generateJson"] = async <
+		T = unknown,
+	>() => ({ mock: true }) as T;
+	const pythonCall: ToolContext["python"]["call"] = async <T = unknown>() =>
+		({ result: "mock" }) as T;
+
 	return {
 		ollama: {
 			generate: mock(() => Promise.resolve("mock response")),
-			generateJson: mock(() => Promise.resolve({ mock: true })),
+			generateJson,
 			embed: mock(() => Promise.resolve([0.1, 0.2, 0.3])),
 			classify: mock(() =>
 				Promise.resolve({
@@ -20,7 +26,7 @@ function createMockContext(overrides?: Partial<ToolContext>): ToolContext {
 			isAvailable: mock(() => Promise.resolve(true)),
 		},
 		python: {
-			call: mock(() => Promise.resolve({ result: "mock" })),
+			call: pythonCall,
 			isRunning: () => true,
 			start: mock(() => Promise.resolve()),
 			stop: mock(() => Promise.resolve()),
@@ -73,20 +79,29 @@ describe("defineTool", () => {
 	});
 
 	test("returns validation error for invalid input", async () => {
-		const result = await echoTool.execute({ message: "" } as any, ctx);
+		const result = await echoTool.execute(
+			{ message: "" } as unknown as Parameters<typeof echoTool.execute>[0],
+			ctx,
+		);
 		expect(result.success).toBe(false);
 		expect(result.error).toContain("Invalid input");
 		expect(result.error).toContain("message");
 	});
 
 	test("returns validation error for missing required fields", async () => {
-		const result = await echoTool.execute({} as any, ctx);
+		const result = await echoTool.execute(
+			{} as unknown as Parameters<typeof echoTool.execute>[0],
+			ctx,
+		);
 		expect(result.success).toBe(false);
 		expect(result.error).toContain("Invalid input");
 	});
 
 	test("returns validation error for wrong type", async () => {
-		const result = await echoTool.execute({ message: 123 } as any, ctx);
+		const result = await echoTool.execute(
+			{ message: 123 } as unknown as Parameters<typeof echoTool.execute>[0],
+			ctx,
+		);
 		expect(result.success).toBe(false);
 		expect(result.error).toContain("Invalid input");
 	});
@@ -110,14 +125,20 @@ describe("defineTool", () => {
 	});
 
 	test("logs validation warnings", async () => {
-		await echoTool.execute({} as any, ctx);
+		await echoTool.execute(
+			{} as unknown as Parameters<typeof echoTool.execute>[0],
+			ctx,
+		);
 		expect(ctx.log.warn).toHaveBeenCalledTimes(1);
 	});
 
 	test("tracks duration on all paths", async () => {
 		const success = await echoTool.execute({ message: "hi" }, ctx);
 		const failure = await failingTool.execute({ input: "x" }, ctx);
-		const invalid = await echoTool.execute({} as any, ctx);
+		const invalid = await echoTool.execute(
+			{} as unknown as Parameters<typeof echoTool.execute>[0],
+			ctx,
+		);
 
 		expect(success.duration_ms).toBeDefined();
 		expect(failure.duration_ms).toBeDefined();
@@ -181,7 +202,10 @@ describe("defineTool edge cases", () => {
 		expect(withOpt.success).toBe(true);
 		expect(withOpt.data).toEqual({ got: "a", opt: "b" });
 
-		const withoutOpt = await tool.execute({ required: "a" } as any, ctx);
+		const withoutOpt = await tool.execute(
+			{ required: "a" } as unknown as Parameters<typeof tool.execute>[0],
+			ctx,
+		);
 		expect(withoutOpt.success).toBe(true);
 		expect(withoutOpt.data).toEqual({ got: "a", opt: undefined });
 	});
