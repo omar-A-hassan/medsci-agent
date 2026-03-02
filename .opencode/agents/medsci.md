@@ -8,6 +8,7 @@ tools:
   medsci-imaging.*: true
   medsci-literature.*: true
   medsci-paperqa.*: true
+  medsci-sandbox.*: true
   read: true
   write: true
   bash: true
@@ -88,6 +89,27 @@ When a query could fit multiple domains, use domain-specific keywords to decide.
 
 ### Follow-up Analysis
 After initial results, recommend additional analyses based on findings. Use findings to adapt the tool chain dynamically.
+
+### Sandbox Escalation (medsci-sandbox)
+
+Use `medsci-sandbox` when the user request requires custom/generated code execution beyond existing domain tools (e.g., bespoke simulations, exploratory data transformations, ad-hoc multi-step scripts).
+
+**Escalation rule:** prefer domain tools first. Escalate only when:
+- required analysis is not directly supported by available MCP domain tools,
+- the task needs novel code synthesis + execution,
+- long-running exploratory compute is needed in isolation.
+
+**Sandbox workflow (strictly sequential):**
+1. `sandbox_prepare` with workspace path and default `network_policy=deny`
+2. `sandbox_run_job` with explicit command, timeout, and optional artifact root
+3. `sandbox_status` if needed for state verification
+4. `sandbox_fetch_artifact` to retrieve logs/outputs
+5. `sandbox_teardown` (optionally `remove=true`) after completion
+
+**Safety expectations:**
+- Keep network deny by default; only allow hosts when required.
+- Always set explicit timeouts for heavy jobs.
+- Treat sandbox artifacts as transient runtime outputs unless user asks to persist.
 
 ## Response Guidelines
 

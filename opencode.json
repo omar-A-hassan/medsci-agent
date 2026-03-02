@@ -1,107 +1,121 @@
 {
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "ollama": {
-      "models": {
-        "medgemma:latest": {}
-      }
-    }
-  },
-  "model": "ollama/medgemma:latest",
-  "mcp": {
-    "medsci-omics": {
-      "type": "local",
-      "command": [
-        "bun",
-        "run",
-        "packages/server-omics/src/index.ts"
-      ],
-      "timeout": 300000,
-      "environment": {
-        "MEDSCI_PROFILE": "standard",
-        "MEDSCI_PYTHON": ".venv/bin/python3"
-      }
-    },
-    "medsci-drug": {
-      "type": "local",
-      "command": [
-        "bun",
-        "run",
-        "packages/server-drug/src/index.ts"
-      ],
-      "timeout": 300000,
-      "environment": {
-        "MEDSCI_PROFILE": "standard",
-        "MEDSCI_PYTHON": ".venv/bin/python3"
-      }
-    },
-    "medsci-protein": {
-      "type": "local",
-      "command": [
-        "bun",
-        "run",
-        "packages/server-protein/src/index.ts"
-      ],
-      "timeout": 300000,
-      "environment": {
-        "MEDSCI_PROFILE": "standard",
-        "MEDSCI_PYTHON": ".venv/bin/python3"
-      }
-    },
-    "medsci-imaging": {
-      "type": "local",
-      "command": [
-        "bun",
-        "run",
-        "packages/server-imaging/src/index.ts"
-      ],
-      "timeout": 300000,
-      "environment": {
-        "MEDSCI_PROFILE": "standard",
-        "MEDSCI_PYTHON": ".venv/bin/python3"
-      }
-    },
-    "medsci-literature": {
-      "type": "local",
-      "command": [
-        "bun",
-        "run",
-        "packages/server-literature/src/index.ts"
-      ],
-      "timeout": 300000,
-      "environment": {
-        "MEDSCI_PROFILE": "standard",
-        "MEDSCI_PYTHON": ".venv/bin/python3"
-      }
-    },
-    "medsci-paperqa": {
-      "type": "local",
-      "command": [
-        "bun",
-        "run",
-        "packages/server-paperqa/src/index.ts"
-      ],
-      "timeout": 600000,
-      "environment": {
-        "MEDSCI_PYTHON": ".venv-paperqa/bin/python3",
-        "PQA_LLM_MODEL": "ollama/medgemma:latest",
-        "PQA_EMBEDDING_MODEL": "ollama/mxbai-embed-large",
-        "PQA_OLLAMA_URL": "http://localhost:11434",
-        "PQA_LLM_TIMEOUT_SECONDS": "480",
-        "PQA_EVIDENCE_K": "5"
-      }
-    },
-    "medsci-sandbox": {
-      "type": "local",
-      "command": [
-        "bun",
-        "run",
-        "packages/server-sandbox/src/index.ts"
-      ],
-      "timeout": 600000,
-      "environment": {
-        "MEDSCI_PROFILE": "standard"
-      }
-    }
-  }
+	"$schema": "https://opencode.ai/config.json",
+	"provider": {
+		"ollama": {
+			"models": {
+				"medgemma:latest": {}
+			}
+		}
+	},
+	"model": "ollama/medgemma:latest",
+	"permission": {
+		"edit": "ask",
+		"task": "ask",
+		"skill": "ask",
+		"webfetch": "ask",
+		"external_directory": "ask",
+		"doom_loop": "ask",
+		"bash": {
+			"*": "ask",
+			"pwd": "allow",
+			"ls*": "allow",
+			"git status*": "allow",
+			"git diff*": "allow",
+			"git log*": "allow",
+			"grep *": "allow",
+			"find *": "allow",
+			"bun test*": "allow",
+			"bun run typecheck*": "allow",
+			"bun run lint*": "allow",
+			"rm *": "deny",
+			"git push*": "deny"
+		}
+	},
+	"agent": {
+		"medsci": {
+			"permission": {
+				"task": {
+					"*": "ask",
+					"explore": "allow",
+					"general": "allow"
+				},
+				"skill": {
+					"*": "ask",
+					"sandbox-execution": "allow",
+					"scanpy": "allow",
+					"pubmed": "allow",
+					"chembl": "allow",
+					"uniprot": "allow"
+				}
+			}
+		}
+	},
+	"mcp": {
+		"medsci-omics": {
+			"type": "local",
+			"command": ["bun", "run", "packages/server-omics/src/index.ts"],
+			"timeout": 300000,
+			"environment": {
+				"MEDSCI_PROFILE": "standard",
+				"MEDSCI_PYTHON": ".venv/bin/python3"
+			}
+		},
+		"medsci-drug": {
+			"type": "local",
+			"command": ["bun", "run", "packages/server-drug/src/index.ts"],
+			"timeout": 300000,
+			"environment": {
+				"MEDSCI_PROFILE": "standard",
+				"MEDSCI_PYTHON": ".venv/bin/python3"
+			}
+		},
+		"medsci-protein": {
+			"type": "local",
+			"command": ["bun", "run", "packages/server-protein/src/index.ts"],
+			"timeout": 300000,
+			"environment": {
+				"MEDSCI_PROFILE": "standard",
+				"MEDSCI_PYTHON": ".venv/bin/python3"
+			}
+		},
+		"medsci-imaging": {
+			"type": "local",
+			"command": ["bun", "run", "packages/server-imaging/src/index.ts"],
+			"timeout": 300000,
+			"environment": {
+				"MEDSCI_PROFILE": "standard",
+				"MEDSCI_PYTHON": ".venv/bin/python3"
+			}
+		},
+		"medsci-literature": {
+			"type": "local",
+			"command": ["bun", "run", "packages/server-literature/src/index.ts"],
+			"timeout": 300000,
+			"environment": {
+				"MEDSCI_PROFILE": "standard",
+				"MEDSCI_PYTHON": ".venv/bin/python3"
+			}
+		},
+		"medsci-paperqa": {
+			"type": "local",
+			"command": ["bun", "run", "packages/server-paperqa/src/index.ts"],
+			"timeout": 600000,
+			"environment": {
+				"MEDSCI_PYTHON": ".venv-paperqa/bin/python3",
+				"PQA_LLM_MODEL": "ollama/medgemma:latest",
+				"PQA_EMBEDDING_MODEL": "ollama/mxbai-embed-large",
+				"PQA_OLLAMA_URL": "http://localhost:11434",
+				"PQA_LLM_TIMEOUT_SECONDS": "480",
+				"PQA_EVIDENCE_K": "5"
+			}
+		},
+		"medsci-sandbox": {
+			"type": "local",
+			"command": ["bun", "run", "packages/server-sandbox/src/index.ts"],
+			"timeout": 600000,
+			"environment": {
+				"MEDSCI_PROFILE": "standard"
+			}
+		}
+	}
 }
