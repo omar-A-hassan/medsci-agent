@@ -227,6 +227,12 @@ Make sure Ollama is running, then open the project directory in OpenCode. The MC
 
 ## OpenCode Agent Usage
 
+### Agent roles
+
+- `medsci` is the primary orchestrator for cross-domain workflows.
+- `drug`, `protein`, `omics`, and `imaging` are focused subagents for domain-deep tasks.
+- All agents follow a planning-first contract (brief plan before first tool call, then strict sequential execution).
+
 ### Built-in project commands
 
 This repo ships OpenCode slash commands under `.opencode/commands`:

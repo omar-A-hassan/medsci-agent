@@ -41,6 +41,7 @@
 				},
 				"skill": {
 					"*": "ask",
+					"operational-guardrails": "allow",
 					"sandbox-execution": "allow",
 					"scanpy": "allow",
 					"pubmed": "allow",
