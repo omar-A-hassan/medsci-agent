@@ -12,7 +12,6 @@
   <a href="https://opencode.ai"><img alt="OpenCode" src="https://img.shields.io/badge/OpenCode-compatible-000000?style=flat" /></a>
   <a href="https://bun.sh"><img alt="Bun" src="https://img.shields.io/badge/Bun-%3E%3D1.1-fbf0df?style=flat&logo=bun&logoColor=000000" /></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow?style=flat" /></a>
-  <img alt="Tests" src="https://img.shields.io/badge/tests-107%20passing-brightgreen?style=flat" />
 </p>
 
 [![MedSci Agent running a single-cell RNA-seq pipeline in OpenCode](docs/demo.png)](https://www.kaggle.com/competitions/med-gemma-impact-challenge)
