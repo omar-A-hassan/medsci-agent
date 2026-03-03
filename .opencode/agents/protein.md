@@ -3,7 +3,7 @@ description: "Specialist for protein design: sequence analysis, structure predic
 mode: subagent
 steps: 25
 temperature: 0.1
-permission:
+tools:
   medsci-protein.*: true
   medsci-literature.*: true
   read: true

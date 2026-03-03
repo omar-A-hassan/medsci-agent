@@ -3,7 +3,7 @@ description: "Specialist for drug discovery: molecular analysis, ADMET, compound
 mode: subagent
 steps: 25
 temperature: 0.1
-permission:
+tools:
   medsci-drug.*: true
   medsci-protein.*: true
   medsci-literature.*: true

@@ -3,7 +3,7 @@ description: "Scientific research orchestrator — routes queries to domain MCP 
 mode: primary
 steps: 35
 temperature: 0.1
-permission:
+tools:
   medsci-omics.*: true
   medsci-drug.*: true
   medsci-protein.*: true

@@ -3,7 +3,7 @@ description: "Specialist for medical image analysis: X-ray, pathology, dermatolo
 mode: subagent
 steps: 25
 temperature: 0.1
-permission:
+tools:
   medsci-imaging.*: true
   medsci-literature.*: true
   read: true

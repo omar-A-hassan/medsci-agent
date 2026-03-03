@@ -3,7 +3,7 @@ description: "Specialist for multi-omics analysis: single-cell, bulk RNA-seq, pr
 mode: subagent
 steps: 25
 temperature: 0.1
-permission:
+tools:
   medsci-omics.*: true
   medsci-literature.*: true
   read: true
