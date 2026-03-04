@@ -17,8 +17,11 @@
 		"server:protein": "bun run packages/server-protein/src/index.ts",
 		"server:imaging": "bun run packages/server-imaging/src/index.ts",
 		"server:literature": "bun run packages/server-literature/src/index.ts",
+		"server:acquisition": "bun run packages/server-acquisition/src/index.ts",
 		"server:paperqa": "bun run packages/server-paperqa/src/index.ts",
-		"server:sandbox": "bun run packages/server-sandbox/src/index.ts"
+		"server:sandbox": "bun run packages/server-sandbox/src/index.ts",
+		"test:python": "packages/server-paperqa/.venv-paperqa/bin/python -m pytest packages/server-paperqa/src/__tests__/test_paperqa_server.py",
+		"test:all": "bun test --recursive && packages/server-paperqa/.venv-paperqa/bin/python -m pytest packages/server-paperqa/src/__tests__/test_paperqa_server.py"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.0",

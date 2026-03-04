@@ -1,3 +1,6 @@
 paper-qa[local]>=5.0.0
 litellm
 httpx
+scrapling
+beautifulsoup4
+pytest>=8.0.0

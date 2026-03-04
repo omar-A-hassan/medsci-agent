@@ -24,6 +24,7 @@ from paperqa_server import (
     _classify_query_error,
     _fetch_bioc_abstract,
     _fetch_bioc_fulltext,
+    _resolve_many_to_pmcid,
     _resolve_to_pmcid,
     acquire_paper_text,
     handle_analyze_papers,
@@ -57,6 +58,7 @@ def test_config_defaults_from_env():
     assert cfg.evidence_k == 10
     assert cfg.docset_cache_max_entries == 8
     assert cfg.docset_cache_max_bytes == 200 * 1024 * 1024
+    assert cfg.preflight_cache_ttl_seconds == 300
     assert cfg.chunk_chars == 1200
     assert cfg.chunk_overlap == 100
     assert cfg.min_chunk_chars == 400
@@ -76,6 +78,7 @@ def test_config_reads_env_overrides():
         "PQA_EVIDENCE_K": "5",
         "PQA_DOCSET_CACHE_MAX_ENTRIES": "4",
         "PQA_CHUNK_CHARS": "800",
+        "PQA_PREFLIGHT_CACHE_TTL_SECONDS": "30",
     }
     with patch.dict(os.environ, env, clear=False):
         cfg = PaperQaRuntimeConfig.from_env()
@@ -85,6 +88,7 @@ def test_config_reads_env_overrides():
     assert cfg.evidence_k == 5
     assert cfg.docset_cache_max_entries == 4
     assert cfg.chunk_chars == 800
+    assert cfg.preflight_cache_ttl_seconds == 30
 
 
 def test_config_invalid_env_falls_back_to_default():
@@ -182,6 +186,32 @@ def test_preflight_accepts_latest_alias_for_embedding_model():
         asyncio.run(preflight_models(settings, "http://localhost:11434"))
 
 
+def test_preflight_cache_ttl_reuses_recent_success():
+    paperqa_server.PREFLIGHT_CACHE.clear()
+    settings = SimpleNamespace(
+        llm="ollama/medgemma:latest",
+        embedding="ollama/mxbai-embed-large",
+    )
+    mock_client = AsyncMock()
+    mock_client.get.return_value = _mock_response(
+        200,
+        {
+            "models": [
+                {"name": "medgemma:latest"},
+                {"name": "mxbai-embed-large:latest"},
+            ]
+        },
+    )
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        asyncio.run(preflight_models(settings, "http://localhost:11434", ttl_seconds=60))
+        asyncio.run(preflight_models(settings, "http://localhost:11434", ttl_seconds=60))
+
+    assert mock_client.get.call_count == 1
+
+
 # --- _classify_indexing_error ---
 
 def test_classify_indexing_error_context_embed_400_as_bad_request():
@@ -255,6 +285,38 @@ def test_resolve_pmid_fallback_on_converter_failure():
     client.get.return_value = _mock_response(500)
     result = asyncio.run(_resolve_to_pmcid("36856617", client, "test@test.com"))
     assert result == (None, "36856617")
+
+
+def test_resolve_many_to_pmcid_batched():
+    client = AsyncMock()
+    client.get.return_value = _mock_response(
+        200,
+        {
+            "records": [
+                {
+                    "requested-id": "10.1234/test",
+                    "pmcid": "PMC1",
+                    "pmid": "111",
+                },
+                {
+                    "requested-id": "36856617",
+                    "pmid": "36856617",
+                },
+            ]
+        },
+    )
+
+    result = asyncio.run(
+        _resolve_many_to_pmcid(
+            identifiers=["10.1234/test", "36856617"],
+            client=client,
+            email="test@test.com",
+            batch_size=10,
+        )
+    )
+
+    assert result["10.1234/test"] == ("PMC1", "111")
+    assert result["36856617"] == (None, "36856617")
 
 
 # --- BioC parsing ---
@@ -602,6 +664,121 @@ def test_handle_analyze_success_contract_invariants_and_deduping():
     assert result["context"] == "ctx"
 
 
+def test_handle_analyze_stub_query_mode_skips_aquery():
+    paperqa_server.DOCSET_CACHE.clear()
+
+    async def fake_acquire(*args, **kwargs):
+        normalized = kwargs["normalized"]
+        paper_dir = kwargs["paper_dir"]
+        path = os.path.join(paper_dir, f"{_file_key(normalized.canonical_id)}.txt")
+        os.makedirs(paper_dir, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("Title: X\\n\\n---\\n\\nBody")
+        return AcquireResult(
+            canonical_id=normalized.canonical_id,
+            raw_identifier=normalized.raw_identifier,
+            filepath=path,
+            source="full_text",
+            pmcid="PMC1",
+            source_hash=hashlib.sha256(open(path, "rb").read()).hexdigest(),
+            error_code=None,
+            error_detail=None,
+        )
+
+    docs_instance = MagicMock()
+    docs_instance.aadd = AsyncMock(return_value="doc")
+    docs_instance.aquery = AsyncMock(return_value=SimpleNamespace())
+
+    with tempfile.TemporaryDirectory() as tmpdir, patch(
+        "paperqa_server.preflight_models", AsyncMock()
+    ), patch("paperqa_server.acquire_paper_text", AsyncMock(side_effect=fake_acquire)), patch(
+        "paperqa.Docs", return_value=docs_instance
+    ), patch.dict(os.environ, {"PQA_TEST_MODE": "stub_query"}, clear=False):
+        payload = {
+            "query": "test query",
+            "papers": [{"identifier": "10.1056/NEJMoa1603827", "title": "LEADER"}],
+            "workspace_dir": tmpdir,
+        }
+        result = asyncio.run(handle_analyze_papers(payload))
+
+    assert result["error_code"] is None
+    assert result["stage_status"]["query"] == "success"
+    assert result["answer"].startswith("[stub_query]")
+    docs_instance.aquery.assert_not_called()
+
+
+def test_handle_analyze_documents_take_precedence_over_papers():
+    paperqa_server.DOCSET_CACHE.clear()
+
+    session = SimpleNamespace(
+        formatted_answer="Answer body",
+        references=["Ref1"],
+        context="ctx",
+    )
+    docs_instance = MagicMock()
+    docs_instance.aadd = AsyncMock(return_value="doc")
+    docs_instance.aquery = AsyncMock(return_value=session)
+
+    with tempfile.TemporaryDirectory() as tmpdir, patch(
+        "paperqa_server.preflight_models", AsyncMock()
+    ), patch("paperqa_server.acquire_paper_text", AsyncMock()) as mocked_acquire, patch(
+        "paperqa.Docs", return_value=docs_instance
+    ):
+        payload = {
+            "query": "test query",
+            "papers": [{"identifier": "10.1056/NEJMoa1603827"}],
+            "documents": [
+                {
+                    "source_id": "doc-1",
+                    "source_type": "url",
+                    "provenance_url": "https://example.org/paper",
+                    "retrieval_method": "scrapling_html",
+                    "license_hint": "unknown",
+                    "text": "Full imported text body",
+                    "text_hash": "abc123",
+                    "metadata": {"title": "Imported Paper", "authors": ["A", "B"]},
+                    "extraction_confidence": 0.8,
+                    "policy": {"allowed": True, "blocked": False},
+                    "content_level": "full_text",
+                }
+            ],
+            "prefer_documents": True,
+            "workspace_dir": tmpdir,
+        }
+        result = asyncio.run(handle_analyze_papers(payload))
+
+    mocked_acquire.assert_not_called()
+    assert result["error_code"] is None
+    assert result["papers_indexed"] == 1
+    assert result["stage_status"]["query"] == "success"
+    assert any("documents input took precedence" in w for w in result["warnings"])
+
+
+def test_handle_analyze_invalid_document_input_surfaces_validation():
+    paperqa_server.DOCSET_CACHE.clear()
+    with tempfile.TemporaryDirectory() as tmpdir, patch(
+        "paperqa_server.preflight_models", AsyncMock()
+    ):
+        payload = {
+            "query": "test query",
+            "documents": [
+                {
+                    # missing source_id
+                    "source_type": "url",
+                    "provenance_url": "https://example.org/paper",
+                    "text": "Body",
+                }
+            ],
+            "prefer_documents": True,
+            "workspace_dir": tmpdir,
+        }
+        result = asyncio.run(handle_analyze_papers(payload))
+
+    assert result["error_code"] == "ACQUIRE_NONE_SUCCESS"
+    assert result["stage_status"]["acquire"] == "failed"
+    assert any(v["code"] == "INVALID_DOCUMENT_INPUT" for v in result["validation_errors"])
+
+
 def test_handle_analyze_retries_indexing_with_smaller_chunks():
     paperqa_server.DOCSET_CACHE.clear()
     observed_chunks: list[int] = []
@@ -726,6 +903,7 @@ def test_cache_eviction_by_entry_count():
     from paperqa_server import _cache_docs_for_workspace, _get_workspace_doc_cache
 
     paperqa_server.DOCSET_CACHE.clear()
+    paperqa_server.DOCSET_CACHE_BYTES.clear()
     env = {"PQA_DOCSET_CACHE_MAX_ENTRIES": "2"}
     with patch.dict(os.environ, env, clear=False):
         cfg = PaperQaRuntimeConfig.from_env()
@@ -745,3 +923,46 @@ def test_cache_eviction_by_entry_count():
     # Oldest key (key_0) should have been evicted
     assert "key_0" not in ws_cache
     paperqa_server.DOCSET_CACHE.clear()
+    paperqa_server.DOCSET_CACHE_BYTES.clear()
+
+
+def test_cache_eviction_by_byte_limit_uses_source_paths():
+    from paperqa_server import _cache_docs_for_workspace, _get_workspace_doc_cache
+
+    paperqa_server.DOCSET_CACHE.clear()
+    paperqa_server.DOCSET_CACHE_BYTES.clear()
+    env = {
+        "PQA_DOCSET_CACHE_MAX_ENTRIES": "10",
+        "PQA_DOCSET_CACHE_MAX_BYTES": "1048576",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        cfg = PaperQaRuntimeConfig.from_env()
+
+    ws = "/test/workspace-bytes"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        p1 = os.path.join(tmpdir, "a.txt")
+        p2 = os.path.join(tmpdir, "b.txt")
+        with open(p1, "w", encoding="utf-8") as f:
+            f.write("A" * 700_000)
+        with open(p2, "w", encoding="utf-8") as f:
+            f.write("B" * 700_000)
+
+        _cache_docs_for_workspace(
+            ws,
+            "key_1",
+            MagicMock(),
+            {"source_hashes": {"doc-1": "h1"}, "source_paths": {"doc-1": p1}},
+            cfg=cfg,
+        )
+        _cache_docs_for_workspace(
+            ws,
+            "key_2",
+            MagicMock(),
+            {"source_hashes": {"doc-2": "h2"}, "source_paths": {"doc-2": p2}},
+            cfg=cfg,
+        )
+
+    ws_cache = _get_workspace_doc_cache(ws)
+    assert len(ws_cache) <= 1
+    paperqa_server.DOCSET_CACHE.clear()
+    paperqa_server.DOCSET_CACHE_BYTES.clear()

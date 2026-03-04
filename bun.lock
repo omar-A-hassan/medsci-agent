@@ -22,6 +22,18 @@
         "typescript": "^5.7.0",
       },
     },
+    "packages/server-acquisition": {
+      "name": "@medsci/server-acquisition",
+      "version": "0.1.0",
+      "dependencies": {
+        "@medsci/core": "workspace:*",
+        "zod": "^3.24.0",
+      },
+      "devDependencies": {
+        "bun-types": "^1.1.0",
+        "typescript": "^5.7.0",
+      },
+    },
     "packages/server-drug": {
       "name": "@medsci/server-drug",
       "version": "0.1.0",
@@ -130,6 +142,8 @@
     "@hono/node-server": ["@hono/node-server@1.19.9", "", { "peerDependencies": { "hono": "^4" } }, "sha512-vHL6w3ecZsky+8P5MD+eFfaGTyCeOHUIFYMGpQGbrBTSmNNoxv0if69rEZ5giu36weC5saFuznL411gRX7bJDw=="],
 
     "@medsci/core": ["@medsci/core@workspace:packages/core"],
+
+    "@medsci/server-acquisition": ["@medsci/server-acquisition@workspace:packages/server-acquisition"],
 
     "@medsci/server-drug": ["@medsci/server-drug@workspace:packages/server-drug"],
 

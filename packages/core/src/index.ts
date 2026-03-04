@@ -15,6 +15,7 @@ export { interpretWithMedGemma } from "./interpret";
 export type { InterpretResult } from "./interpret";
 export { withOptionalSynthesis } from "./optional-synthesis";
 export { getSidecarErrorEnvelope, mapSidecarError } from "./sidecar-errors";
+export { stripDoiResolver, normalizeDoi, isDoi } from "./doi";
 
 export type {
 	ToolContext,
@@ -30,6 +31,13 @@ export type {
 	SidecarResponse,
 	SidecarErrorEnvelope,
 	SidecarErrorStage,
+	AcquiredDocument,
+	AcquiredDocumentMetadata,
+	AcquisitionLicenseHint,
+	AcquisitionPolicyDecision,
+	AcquisitionRetrievalMethod,
+	AcquisitionSourceType,
+	AcquisitionExtractionBackend,
 	Logger,
 	LogLevel,
 } from "./types";

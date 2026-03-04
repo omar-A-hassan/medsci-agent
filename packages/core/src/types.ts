@@ -139,6 +139,57 @@ export interface SidecarResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Acquisition contract
+// ---------------------------------------------------------------------------
+
+export type AcquisitionSourceType = "doi" | "pmid" | "pmcid" | "url";
+
+export type AcquisitionRetrievalMethod =
+	| "ncbi_bioc"
+	| "scrapling_html"
+	| "scrapling_pdf"
+	| "cached";
+
+export type AcquisitionExtractionBackend =
+	| "scrapling"
+	| "beautifulsoup"
+	| "regex"
+	| "pdf_text"
+	| "plain_text";
+
+export type AcquisitionLicenseHint = "open_access" | "unknown" | "restricted";
+
+export interface AcquiredDocumentMetadata {
+	title?: string;
+	authors?: string[];
+	published_at?: string;
+	journal?: string;
+	doi?: string;
+}
+
+export interface AcquisitionPolicyDecision {
+	allowed: boolean;
+	blocked: boolean;
+	reason?: string;
+}
+
+export interface AcquiredDocument {
+	source_id: string;
+	source_type: AcquisitionSourceType;
+	provenance_url: string;
+	retrieval_method: AcquisitionRetrievalMethod;
+	license_hint: AcquisitionLicenseHint;
+	text: string;
+	text_hash: string;
+	metadata: AcquiredDocumentMetadata;
+	extraction_confidence: number;
+	extraction_backend?: AcquisitionExtractionBackend;
+	fallback_used?: boolean;
+	policy: AcquisitionPolicyDecision;
+	content_level?: "metadata" | "abstract" | "full_text";
+}
+
+// ---------------------------------------------------------------------------
 // Logger
 // ---------------------------------------------------------------------------
 

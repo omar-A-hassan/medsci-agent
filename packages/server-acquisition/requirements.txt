@@ -1,0 +1,2 @@
+scrapling
+beautifulsoup4

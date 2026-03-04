@@ -53,6 +53,20 @@ describe("fetch_abstract", () => {
 		expect(result.success).toBe(false);
 		expect(result.error).toContain("PubMed fetch failed");
 	});
+
+	test("fails gracefully on malformed XML", async () => {
+		globalThis.fetch = mock(() =>
+			Promise.resolve(new Response("<invalid", { status: 200 })),
+		) as any;
+
+		const ctx = createMockContext();
+		const result = await fetchAbstract.execute(
+			{ pmid: "12345678", needs_synthesized_summary: false },
+			ctx,
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("Unable to parse PubMed XML response");
+	});
 });
 
 describe("search_pubmed", () => {
@@ -117,6 +131,42 @@ describe("search_pubmed", () => {
 		const result = await searchPubmed.execute({ query: "test" }, ctx);
 		expect(result.success).toBe(false);
 		expect(result.error).toContain("PubMed search failed");
+	});
+
+	test("normalizes DOI from elocationid metadata", async () => {
+		globalThis.fetch = mock((url: string) => {
+			if (typeof url === "string" && url.includes("esearch")) {
+				return Promise.resolve(
+					new Response(
+						JSON.stringify({ esearchresult: { idlist: ["333"] } }),
+						{ status: 200 },
+					),
+				);
+			}
+			return Promise.resolve(
+				new Response(
+					JSON.stringify({
+						result: {
+							"333": {
+								title: "Article Three",
+								source: "Nature",
+								pubdate: "2025",
+								elocationid: "10.1000/ABC123 [doi]",
+							},
+						},
+					}),
+					{ status: 200 },
+				),
+			);
+		}) as any;
+
+		const ctx = createMockContext();
+		const result = await searchPubmed.execute(
+			{ query: "test", needs_synthesized_summary: false },
+			ctx,
+		);
+		expect(result.success).toBe(true);
+		expect(result.data?.articles[0].doi).toBe("10.1000/ABC123");
 	});
 });
 

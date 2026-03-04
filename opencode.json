@@ -97,12 +97,21 @@
 				"MEDSCI_PYTHON": ".venv/bin/python3"
 			}
 		},
+		"medsci-acquisition": {
+			"type": "local",
+			"command": ["bun", "run", "packages/server-acquisition/src/index.ts"],
+			"timeout": 300000,
+			"environment": {
+				"MEDSCI_PROFILE": "standard",
+				"MEDSCI_PYTHON": "packages/server-paperqa/.venv-paperqa/bin/python3"
+			}
+		},
 		"medsci-paperqa": {
 			"type": "local",
 			"command": ["bun", "run", "packages/server-paperqa/src/index.ts"],
 			"timeout": 600000,
 			"environment": {
-				"MEDSCI_PYTHON": ".venv-paperqa/bin/python3",
+				"MEDSCI_PYTHON": "packages/server-paperqa/.venv-paperqa/bin/python3",
 				"PQA_LLM_MODEL": "ollama/medgemma:latest",
 				"PQA_EMBEDDING_MODEL": "ollama/mxbai-embed-large",
 				"PQA_OLLAMA_URL": "http://localhost:11434",

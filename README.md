@@ -16,7 +16,7 @@
 
 [![MedSci Agent running a single-cell RNA-seq pipeline in OpenCode](docs/demo.png)](https://www.kaggle.com/competitions/med-gemma-impact-challenge)
 
-MedSci Agent gives any LLM access to 26 biomedical and execution tools — drug ADMET prediction, protein structure search, single-cell RNA-seq analysis, medical image interpretation, literature search, and isolated sandbox execution — all powered by [MedGemma](https://huggingface.co/google/medgemma-4b-it), [TxGemma](https://huggingface.co/google/txgemma-2b-predict) running locally via Ollama, and [OpenCode](https://opencode.ai). No data leaves your machine.
+MedSci Agent gives any LLM access to 28 biomedical and execution tools — drug ADMET prediction, protein structure search, single-cell RNA-seq analysis, medical image interpretation, literature search, policy-controlled document acquisition, and isolated sandbox execution — all powered by [MedGemma](https://huggingface.co/google/medgemma-4b-it), [TxGemma](https://huggingface.co/google/txgemma-2b-predict) running locally via Ollama, and [OpenCode](https://opencode.ai). No data leaves your machine.
 
 Built for the [MedGemma Impact Challenge](https://www.kaggle.com/competitions/med-gemma-impact-challenge).
 
@@ -48,7 +48,7 @@ The Agent automatically selects the right tools, calls MedGemma for interpretati
 
 ## Architecture
 
-You bring your own LLM. Configure any model in OpenCode (via `/model`) and it becomes the orchestrator — it reads your query, selects the right tools, calls them through MCP, and synthesizes the results. The 6 MCP servers handle the domain logic underneath.
+You bring your own LLM. Configure any model in OpenCode (via `/model`) and it becomes the orchestrator — it reads your query, selects the right tools, calls them through MCP, and synthesizes the results. The MCP servers handle the domain logic underneath.
 
 ```
 Cloud LLM (user's choice via OpenCode)
@@ -60,6 +60,7 @@ Cloud LLM (user's choice via OpenCode)
 |  server-drug        5 tools           |
 |  server-protein     5 tools           |
 |  server-literature  4 tools           |
+|  server-acquisition 2 tools           |
 |  server-imaging     1 tool            |
 |  server-omics       5 tools           |
 |  server-paperqa     1 tool            |
@@ -104,7 +105,7 @@ The **Python sidecar** is a long-running process that pre-imports scientific lib
 | `search_pdb` | Search PDB for 3D structures by protein or PDB ID | RCSB PDB API + MedGemma |
 | `predict_structure` | Retrieve AlphaFold predicted structure and confidence scores | AlphaFold DB API + MedGemma |
 
-### Literature & Synthesis (server-literature & server-paperqa)
+### Literature, Acquisition & Synthesis (server-literature, server-acquisition & server-paperqa)
 
 | Tool | Description | Backend |
 |------|-------------|---------|
@@ -112,7 +113,9 @@ The **Python sidecar** is a long-running process that pre-imports scientific lib
 | `fetch_abstract` | Fetch full abstract and metadata by PMID | NCBI E-utilities + MedGemma |
 | `search_openalex` | Search OpenAlex for scholarly works, citations, open access status | OpenAlex API + MedGemma |
 | `search_clinical_trials` | Search ClinicalTrials.gov by condition, drug, or intervention | ClinicalTrials.gov API + MedGemma |
-| `search_and_analyze` | Deep semantic synthesis of up to 10 papers (full text via NCBI BioC API, abstract fallback) using contextual LLM re-ranking | PaperQA2 + Tantivy |
+| `resolve_identifier_to_sources` | Resolve DOI/PMID/PMCID into candidate source URLs with provenance and confidence | NCBI ID Converter + deterministic transforms |
+| `acquire_documents` | Policy-controlled document retrieval from DOI/PMID/PMCID/URL with content-level labeling and explicit extraction backend metadata (`pmid/pmcid`: BioC-first with Scrapling fallback, `doi/url`: Scrapling-primary) | NCBI BioC + Scrapling sidecar + safety policy engine |
+| `search_and_analyze` | Deep semantic synthesis of up to 10 identifiers/documents (internal NCBI acquisition or pre-acquired documents) using contextual LLM re-ranking | PaperQA2 + Tantivy |
 
 ### Medical Imaging (server-imaging)
 
@@ -163,7 +166,7 @@ bun install
 
 ### 2. Python environments
 
-The system uses two strictly decoupled Python virtual environments to prevent heavy machine-learning dependencies from bloating the core agent if you do not want to use deep literature synthesis.
+The system uses two strictly decoupled Python virtual environments. This is intentional and avoids a third scientific environment.
 
 **Core Environment (Required):**
 ```bash
@@ -172,7 +175,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**PaperQA Environment (Optional, for deep literature synthesis):**
+**PaperQA + Acquisition Environment (Required for strict full-text retrieval and deep synthesis):**
 ```bash
 cd packages/server-paperqa
 python3 -m venv .venv-paperqa
@@ -181,7 +184,11 @@ pip install -r requirements.txt
 cd ../..
 ```
 
-> **Important:** Set `MEDSCI_PYTHON` to `.venv/bin/python3` in your `opencode.json` server environment blocks for core tools. The PaperQA server manages its own Python binary internally — it always uses `packages/server-paperqa/.venv-paperqa/bin/python3`.
+> **Important:** Set `MEDSCI_PYTHON` to `.venv/bin/python3` for core tools. Both `medsci-paperqa` and `medsci-acquisition` should run with `packages/server-paperqa/.venv-paperqa/bin/python3` to keep Scrapling and PaperQA dependencies in one environment.
+>
+> Dependency ownership:
+> - `.venv` (`requirements.txt`): core science sidecars (RDKit/BioPython/Scanpy and related tool stacks).
+> - `packages/server-paperqa/.venv-paperqa` (`packages/server-paperqa/requirements.txt`): PaperQA + acquisition parsing stack (`paper-qa`, `scrapling`, `beautifulsoup4`).
 
 ### 3. Pull Ollama models
 
@@ -216,8 +223,12 @@ Update the `MEDSCI_PYTHON` path in each server's environment block if your virtu
 ### 5. Run tests
 
 ```bash
-bun test
+bun run test:all
 ```
+
+This runs:
+- all Bun tests across MCP servers (including sidecar-in-loop tests when `packages/server-paperqa/.venv-paperqa` exists),
+- and PaperQA Python tests using the PaperQA venv interpreter.
 
 ### 6. Start
 
@@ -290,7 +301,18 @@ Environment variables (set in `opencode.json` under each server's `environment`)
 | `PQA_EVIDENCE_K` | `10` | Number of evidence chunks PaperQA gathers before answering |
 | `PQA_DOCSET_CACHE_MAX_ENTRIES` | `8` | Max number of in-memory docset cache entries per workspace |
 | `PQA_DOCSET_CACHE_MAX_BYTES` | `209715200` | Max total bytes for in-memory docset cache (default 200 MB) |
+| `PQA_PREFLIGHT_CACHE_TTL_SECONDS` | `300` | TTL for cached Ollama preflight checks to avoid repeated startup latency |
 | `PQA_SKIP_PREFLIGHT` | `false` | If `true`, skip Ollama model reachability/model-presence preflight checks |
+| `PQA_ENABLE_DOCUMENT_INPUT` | `true` | If `false`, rejects `documents` payloads and only allows identifier-based acquisition |
+
+Acquisition-related environment variables (optional, `server-acquisition`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ACQ_REQUIRE_SCRAPLING` | `true` | If `true`, acquisition sidecar health and HTML extraction fail when Scrapling is unavailable |
+| `ACQ_PYTHON` | _unset_ | Optional explicit Python binary for acquisition sidecar (defaults to PaperQA venv path) |
+| `ACQ_CACHE_DIR` | `.opencode/acquired_docs` | Cache location for acquired document payloads |
+| `ACQ_MAX_BYTES_HARD_CAP` | `10000000` | Hard upper bound on response body bytes regardless of per-call options |
 
 Sandbox-related environment variables (optional, `server-sandbox`):
 
@@ -331,13 +353,15 @@ The `MEDSCI_PROFILE` setting controls which Python libraries are pre-imported wh
 ### PaperQA Data Nuances
 When querying papers via `server-paperqa`, the tool performs a multi-step pipeline:
 1. **Text Acquisition** — Full-text articles are acquired via the NCBI BioC PMC API (DOIs, PMIDs, or PMCIDs). Papers not in PMC Open Access fall back to abstract-only via the BioC PubMed API. Acquired text is cached as `.txt` files in `.opencode/pqa_papers/`.
+   - `search_and_analyze` also accepts pre-acquired `documents` payloads. When provided, PaperQA skips internal acquisition and indexes those documents directly.
 2. **Indexing** — PaperQA2 indexes the text files and builds a search index in `.opencode/pqa_index/`.
 3. **RAG Synthesis** — The query runs against indexed chunks using Ollama for both summarization and final answer generation.
 
 - **Models**: PaperQA uses `PQA_LLM_MODEL` (default: `ollama/medgemma:latest`) for summarization and answering, and `PQA_EMBEDDING_MODEL` (default: `ollama/mxbai-embed-large`) for document embeddings. Both run locally via Ollama.
 - **Preflight**: The sidecar verifies Ollama reachability and required model presence before indexing/query. Failures return structured codes (`OLLAMA_UNREACHABLE`, `MODEL_NOT_FOUND`).
 - **Agent Type**: Uses `"fake"` agent mode (deterministic search → gather evidence → answer path) rather than an LLM-driven agent, which reduces token usage.
-- **Paper Limits**: The `search_and_analyze` schema strictly bounds processing to `max_papers=10` per call to avoid Out-of-Memory crashes.
+- **Paper Limits**: The `search_and_analyze` schema strictly bounds processing to 10 inputs per call (papers or documents) to avoid Out-of-Memory crashes.
+- **Document Provenance Contract**: Pre-acquired documents can include `extraction_backend` (`scrapling`, `beautifulsoup`, `regex`, `pdf_text`, `plain_text`) and `fallback_used` so downstream synthesis can reason about evidence quality explicitly.
 - **PMC Open Access Coverage**: Full-text retrieval requires papers to be in the PMC Open Access subset (~3.5M articles). Papers outside this subset get abstract-only indexing — the response includes an `acquisition_summary` showing which papers were full-text vs abstract-only.
 - **Stage-Gated Responses**: `search_and_analyze` now returns `stage_status` (`acquire`, `index`, `query`) and fail-soft terminal codes (`ACQUIRE_NONE_SUCCESS`, `INDEX_ZERO_SUCCESS`) instead of opaque failures.
 - **Embedding Context Guardrail**: Indexing now uses conservative chunk defaults and automatic chunk-size backoff retries when Ollama embedding rejects large inputs (`/api/embed` context-limit errors).
@@ -357,9 +381,10 @@ medsci-agent/
     server-drug/        Drug discovery MCP server
     server-protein/     Protein analysis MCP server
     server-literature/  Literature search MCP server
+    server-acquisition/ Policy-controlled retrieval MCP server
     server-imaging/     Medical imaging MCP server
     server-omics/       Single-cell and omics MCP server
-    server-paperqa/     Deep literature synthesis MCP server (NCBI BioC text acquisition)
+    server-paperqa/     Deep literature synthesis MCP server (identifier or document ingestion)
     server-sandbox/     Isolated sandbox execution MCP server
   .opencode/
     agents/             Agent definitions (orchestrator + 4 domain specialists + PaperQA routing)

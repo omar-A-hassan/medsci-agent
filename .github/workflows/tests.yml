@@ -1,0 +1,42 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  bun-and-paperqa-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Bun dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Create PaperQA virtual environment
+        run: |
+          python -m pip install --upgrade pip
+          python -m venv packages/server-paperqa/.venv-paperqa
+          packages/server-paperqa/.venv-paperqa/bin/python -m pip install --upgrade pip
+          packages/server-paperqa/.venv-paperqa/bin/pip install -r packages/server-paperqa/requirements.txt
+
+      - name: Verify Scrapling dependency in PaperQA venv
+        run: |
+          packages/server-paperqa/.venv-paperqa/bin/python -c "import scrapling; print(scrapling.__version__)"
+
+      - name: Run Bun tests
+        run: bun test --recursive
+
+      - name: Run Python tests
+        run: packages/server-paperqa/.venv-paperqa/bin/python -m pytest packages/server-paperqa/src/__tests__/test_paperqa_server.py

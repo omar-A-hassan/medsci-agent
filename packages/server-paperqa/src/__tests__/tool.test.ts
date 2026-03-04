@@ -6,6 +6,10 @@ import {
 	searchAndAnalyzeTool,
 } from "../tools/search-and-analyze";
 
+const originalIsRunning = pqaSidecar.isRunning.bind(pqaSidecar);
+const originalStart = pqaSidecar.start.bind(pqaSidecar);
+const originalCall = pqaSidecar.call.bind(pqaSidecar);
+
 describe("computeTimeoutMs (timeout hierarchy)", () => {
 	test("scales with paper count, capped at 540s", () => {
 		// 1 paper: base = 150s, llmBudget = (180+45)*1000 = 225s → max(150, 225) = 225s
@@ -45,6 +49,9 @@ describe("computeTimeoutMs (timeout hierarchy)", () => {
 
 describe("search_and_analyze (IPC Serialization & Schema Boundaries)", () => {
 	afterEach(() => {
+		pqaSidecar.isRunning = originalIsRunning;
+		pqaSidecar.start = originalStart;
+		pqaSidecar.call = originalCall;
 		mock.restore();
 	});
 
@@ -61,6 +68,37 @@ describe("search_and_analyze (IPC Serialization & Schema Boundaries)", () => {
 				"STRICT LIMIT: Maximum 10 papers allowed",
 			);
 		}
+	});
+
+	test("accepts documents-only input", () => {
+		const input = {
+			query: "Test",
+			documents: [
+				{
+					source_id: "doc-1",
+					source_type: "doi",
+					provenance_url: "https://example.org/paper",
+					retrieval_method: "scrapling_html",
+					license_hint: "unknown",
+					text: "full text body",
+					text_hash: "1234567890abcdef",
+					metadata: {},
+					extraction_confidence: 0.8,
+					extraction_backend: "scrapling",
+					fallback_used: false,
+					policy: { allowed: true, blocked: false },
+				},
+			],
+		};
+
+		const result = searchAndAnalyzeTool.schema.safeParse(input);
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects missing papers and documents", () => {
+		const input = { query: "Test", papers: [], documents: [] };
+		const result = searchAndAnalyzeTool.schema.safeParse(input);
+		expect(result.success).toBe(false);
 	});
 
 	test("translates ACQUIRE_NONE_SUCCESS to agent-safe instruction", async () => {
@@ -187,13 +225,61 @@ describe("search_and_analyze (IPC Serialization & Schema Boundaries)", () => {
 				],
 			},
 			ctx,
+			);
+
+			expect(result.success).toBe(true);
+			const data = result.data as any;
+			expect(data?.answer).toContain("Checkpoint inhibitors");
+			expect(data?.acquisition_summary.full_text).toContain("36856617");
+			expect(data?.acquisition_summary.abstract_only).toHaveLength(0);
+			expect(data?.stage_status.query).toBe("success");
+			expect(pqaSidecar.call).toHaveBeenCalledTimes(1);
+		});
+
+	test("sends documents and prefer_documents flag when both papers and documents are provided", async () => {
+		pqaSidecar.isRunning = mock(() => true);
+		pqaSidecar.start = mock(() => Promise.resolve());
+
+		pqaSidecar.call = mock(async <T = unknown>(method: string, data: any) => {
+			expect(method).toBe("analyze_papers");
+			expect(data.prefer_documents).toBe(true);
+			expect(data.documents).toHaveLength(1);
+			expect(data.papers).toHaveLength(1);
+			return {
+				answer: "ok",
+				references: [],
+				context: "",
+				stage_status: { acquire: "success", index: "success", query: "success" },
+				warnings: [],
+			} as unknown as T;
+		}) as any;
+
+		const ctx = createMockContext();
+		const result = await searchAndAnalyzeTool.execute(
+			{
+				query: "Test",
+				papers: [{ identifier: "36856617" }],
+				documents: [
+					{
+						source_id: "doc-1",
+						source_type: "doi",
+						provenance_url: "https://example.org/paper",
+						retrieval_method: "scrapling_html",
+						license_hint: "unknown",
+						text: "full text body",
+						text_hash: "1234567890abcdef",
+						metadata: {},
+							extraction_confidence: 0.8,
+							extraction_backend: "scrapling",
+							fallback_used: false,
+							policy: { allowed: true, blocked: false },
+						},
+					],
+			},
+			ctx,
 		);
 
 		expect(result.success).toBe(true);
-		expect(result.data?.answer).toContain("Checkpoint inhibitors");
-		expect(result.data?.acquisition_summary.full_text).toContain("36856617");
-		expect(result.data?.acquisition_summary.abstract_only).toHaveLength(0);
-		expect(result.data?.stage_status.query).toBe("success");
 		expect(pqaSidecar.call).toHaveBeenCalledTimes(1);
 	});
 

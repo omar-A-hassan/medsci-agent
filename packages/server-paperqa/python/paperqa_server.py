@@ -31,12 +31,15 @@ logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger("paperqa-sidecar")
 
 DOCSET_CACHE: Dict[str, Dict[str, Dict[str, Any]]] = {}
+DOCSET_CACHE_BYTES: Dict[str, int] = {}
+PREFLIGHT_CACHE: Dict[str, Dict[str, Any]] = {}
 DOI_REGEX = re.compile(r"^10\.\d{4,9}/\S+$", re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
 # Error code constants (single registry for Python side)
 # ---------------------------------------------------------------------------
 EC_INVALID_IDENTIFIER = "INVALID_IDENTIFIER"
+EC_INVALID_DOCUMENT_INPUT = "INVALID_DOCUMENT_INPUT"
 EC_INVALID_REQUEST = "INVALID_REQUEST"
 EC_DEPENDENCY_MISSING = "DEPENDENCY_MISSING"
 EC_OLLAMA_UNREACHABLE = "OLLAMA_UNREACHABLE"
@@ -311,6 +314,7 @@ class PaperQaRuntimeConfig:
     evidence_k: int
     docset_cache_max_entries: int
     docset_cache_max_bytes: int
+    preflight_cache_ttl_seconds: int
 
     @classmethod
     def from_env(cls) -> "PaperQaRuntimeConfig":
@@ -334,6 +338,9 @@ class PaperQaRuntimeConfig:
             docset_cache_max_entries=_parse_env_int("PQA_DOCSET_CACHE_MAX_ENTRIES", 8, min_value=1),
             docset_cache_max_bytes=_parse_env_int(
                 "PQA_DOCSET_CACHE_MAX_BYTES", 200 * 1024 * 1024, min_value=1024 * 1024
+            ),
+            preflight_cache_ttl_seconds=_parse_env_int(
+                "PQA_PREFLIGHT_CACHE_TTL_SECONDS", 300, min_value=0
             ),
         )
 
@@ -433,6 +440,198 @@ async def _resolve_to_pmcid(
     return (None, None)
 
 
+def _normalize_lookup_identifier(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return raw
+    if raw.upper().startswith("PMC"):
+        return raw.upper()
+    if raw.isdigit():
+        return raw
+    return _strip_doi_resolver(raw).lower()
+
+
+async def _resolve_many_to_pmcid(
+    identifiers: List[str],
+    client,
+    email: str,
+    batch_size: int = 40,
+) -> Dict[str, Tuple[Optional[str], Optional[str]]]:
+    """
+    Resolve identifiers to (pmcid, pmid) tuples using batched NCBI ID converter calls.
+    Falls back to per-identifier resolution for unresolved records.
+    """
+    out: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
+    if not identifiers:
+        return out
+
+    normalized_inputs = [_normalize_lookup_identifier(i) for i in identifiers if i]
+    unresolved = set(normalized_inputs)
+
+    for start in range(0, len(normalized_inputs), batch_size):
+        chunk = normalized_inputs[start : start + batch_size]
+        if not chunk:
+            continue
+        joined_ids = ",".join(chunk)
+        url = (
+            f"https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/"
+            f"?ids={joined_ids}&format=json&tool=medsci-agent&email={email}"
+        )
+        try:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                continue
+
+            payload = resp.json()
+            records = payload.get("records", []) if isinstance(payload, dict) else []
+            for rec in records:
+                if not isinstance(rec, dict):
+                    continue
+
+                requested = (
+                    rec.get("requested-id")
+                    or rec.get("requested_id")
+                    or rec.get("pmcid")
+                    or rec.get("pmid")
+                    or rec.get("doi")
+                )
+                if not requested:
+                    continue
+
+                key = _normalize_lookup_identifier(str(requested))
+                pmcid = rec.get("pmcid")
+                pmid = rec.get("pmid")
+                if isinstance(pmcid, str):
+                    pmcid = pmcid.upper()
+                if isinstance(pmid, int):
+                    pmid = str(pmid)
+                if isinstance(pmid, str) and not pmid.isdigit():
+                    pmid = None
+
+                out[key] = (pmcid, pmid)
+                unresolved.discard(key)
+        except Exception as e:
+            logger.warning("Batched NCBI ID conversion failed for chunk size=%s: %s", len(chunk), e)
+
+    for key in list(unresolved):
+        pmcid, pmid = await _resolve_to_pmcid(key, client, email)
+        out[key] = (pmcid, pmid)
+
+    return out
+
+
+def _materialize_external_document(
+    document: Dict[str, Any],
+    paper_dir: str,
+    papers_manifest: Dict[str, Any],
+    max_text_chars: int,
+) -> AcquireResult:
+    source_id = str(document.get("source_id") or "").strip()
+    provenance_url = str(document.get("provenance_url") or "").strip()
+    text = str(document.get("text") or "")
+
+    if not source_id:
+        raise SidecarEnvelopeError(
+            code=EC_INVALID_DOCUMENT_INPUT,
+            message="Document is missing source_id.",
+            stage="acquire",
+            retryable=False,
+        )
+    if not provenance_url:
+        raise SidecarEnvelopeError(
+            code=EC_INVALID_DOCUMENT_INPUT,
+            message=f"Document {source_id} is missing provenance_url.",
+            stage="acquire",
+            retryable=False,
+        )
+    if not text.strip():
+        raise SidecarEnvelopeError(
+            code=EC_INVALID_DOCUMENT_INPUT,
+            message=f"Document {source_id} has empty text.",
+            stage="acquire",
+            retryable=False,
+        )
+    if len(text) > max_text_chars:
+        raise SidecarEnvelopeError(
+            code=EC_TEXT_TOO_LARGE,
+            message=(
+                f"Document {source_id} exceeded max threshold "
+                f"({len(text)} chars > {max_text_chars})."
+            ),
+            stage="acquire",
+            retryable=False,
+        )
+
+    metadata = document.get("metadata") if isinstance(document.get("metadata"), dict) else {}
+    title = str(metadata.get("title") or source_id)
+    authors = metadata.get("authors") if isinstance(metadata.get("authors"), list) else []
+    authors = [str(a) for a in authors[:5]]
+    authors_str = ", ".join(authors) if authors else "Unknown"
+
+    retrieval_method = str(document.get("retrieval_method") or "cached")
+    extraction_backend = str(document.get("extraction_backend") or "")
+    fallback_used = bool(document.get("fallback_used", False))
+    content_level = str(document.get("content_level") or "full_text")
+    source_kind = str(document.get("source_type") or "url")
+    doi = metadata.get("doi") if isinstance(metadata.get("doi"), str) else ""
+
+    canonical_id = source_id
+    file_key = _resolve_file_key(canonical_id)
+    cached_path = os.path.join(paper_dir, f"{file_key}.txt")
+
+    header = (
+        f"Title: {title}\n"
+        f"Authors: {authors_str}\n"
+        f"DOI: {doi}\n"
+        f"PMCID: N/A\n"
+        f"Source: external_document\n"
+        f"Retrieval-Method: {retrieval_method}\n"
+        f"Source-Type: {source_kind}\n"
+        f"Provenance-URL: {provenance_url}\n"
+        f"Content-Level: {content_level}\n"
+        f"Extraction-Backend: {extraction_backend}\n"
+        f"Fallback-Used: {fallback_used}\n"
+        "\n---\n\n"
+    )
+
+    with open(cached_path, "w", encoding="utf-8") as f:
+        f.write(header + text)
+
+    source_hash = _hash_file(cached_path)
+    papers_manifest["entries"][canonical_id] = {
+        "canonical_id": canonical_id,
+        "file_key": file_key,
+        "path": cached_path,
+        "pmcid": None,
+        "source": "external_document",
+        "retrieval_method": retrieval_method,
+        "source_hash": source_hash,
+        "updated_at": _utc_now_iso(),
+        "raw_identifiers": sorted(
+            set(
+                list(papers_manifest["entries"].get(canonical_id, {}).get("raw_identifiers", []))
+                + [source_id]
+            )
+        ),
+    }
+    _clear_negative_cache(papers_manifest, canonical_id)
+
+    source_bucket = "abstract" if content_level == "abstract" else "full_text"
+    if retrieval_method == "cached":
+        source_bucket = "cached"
+
+    return AcquireResult(
+        canonical_id=canonical_id,
+        raw_identifier=source_id,
+        filepath=cached_path,
+        source=source_bucket,
+        pmcid=None,
+        source_hash=source_hash,
+        error_code=None,
+        error_detail=None,
+    )
+
+
 async def _fetch_bioc_passages(url: str, client) -> Optional[str]:
     """
     Fetch and join passage text from any NCBI BioC JSON endpoint.
@@ -483,11 +682,20 @@ async def _fetch_bioc_abstract(pmid: str, client) -> Optional[str]:
     return "[ABSTRACT ONLY — Full text not available in PMC Open Access]\n\n" + body
 
 
-async def preflight_models(settings, ollama_base: str) -> None:
+async def preflight_models(settings, ollama_base: str, ttl_seconds: int = 300) -> None:
     import httpx
 
     if _parse_env_bool("PQA_SKIP_PREFLIGHT", False):
         return
+
+    cache_key = f"{ollama_base}|{settings.llm}|{settings.embedding}"
+    if ttl_seconds > 0:
+        cached = PREFLIGHT_CACHE.get(cache_key)
+        if isinstance(cached, dict):
+            expires_at = cached.get("expires_at")
+            parsed = _parse_iso_time(expires_at) if isinstance(expires_at, str) else None
+            if parsed is not None and parsed > _utc_now():
+                return
 
     timeout_seconds = 5
     try:
@@ -544,12 +752,19 @@ async def preflight_models(settings, ollama_base: str) -> None:
             retryable=False,
         )
 
+    if ttl_seconds > 0:
+        PREFLIGHT_CACHE[cache_key] = {
+            "checked_at": _utc_now_iso(),
+            "expires_at": (_utc_now() + timedelta(seconds=ttl_seconds)).isoformat(),
+        }
+
 
 async def acquire_paper_text(
     normalized: NormalizedIdentifier,
     paper_dir: str,
     papers_manifest: Dict[str, Any],
     paper_meta: Optional[Dict] = None,
+    resolved_ids: Optional[Tuple[Optional[str], Optional[str]]] = None,
     client=None,
     max_text_chars: int = 1_500_000,
     negative_cache_ttl_hours: int = 24,
@@ -620,7 +835,10 @@ async def acquire_paper_text(
         client = httpx.AsyncClient(follow_redirects=True, timeout=30)
 
     try:
-        pmcid, pmid = await _resolve_to_pmcid(normalized.lookup_id, client, email)
+        if resolved_ids is None:
+            pmcid, pmid = await _resolve_to_pmcid(normalized.lookup_id, client, email)
+        else:
+            pmcid, pmid = resolved_ids
 
         body = None
         source = "failed"
@@ -749,6 +967,7 @@ def _make_docset_cache_key(entries: List[Dict[str, Any]]) -> str:
 def _get_workspace_doc_cache(workspace_dir: str) -> Dict[str, Dict[str, Any]]:
     if workspace_dir not in DOCSET_CACHE:
         DOCSET_CACHE[workspace_dir] = {}
+    DOCSET_CACHE_BYTES.setdefault(workspace_dir, 0)
     return DOCSET_CACHE[workspace_dir]
 
 
@@ -765,16 +984,28 @@ def _cache_docs_for_workspace(
     cfg: PaperQaRuntimeConfig,
 ) -> None:
     ws_cache = _get_workspace_doc_cache(workspace_dir)
+    DOCSET_CACHE_BYTES.setdefault(workspace_dir, 0)
 
-    # Estimate bytes from source file sizes
+    # Estimate bytes from real source file sizes when available.
     approx_bytes = 0
-    for cid, shash in metadata.get("source_hashes", {}).items():
-        for entry in ws_cache.values():
-            src = entry.get("metadata", {}).get("source_hashes", {})
-            if cid in src:
-                break
-        # Estimate ~50KB per indexed doc as fallback (conservative)
+    source_paths = metadata.get("source_paths", {})
+    for cid in metadata.get("source_hashes", {}).keys():
+        path = source_paths.get(cid)
+        if isinstance(path, str) and os.path.exists(path):
+            try:
+                approx_bytes += os.path.getsize(path)
+                continue
+            except Exception:
+                pass
+        # Conservative fallback when source path is unavailable.
         approx_bytes += 50 * 1024
+
+    previous = ws_cache.get(cache_key)
+    if isinstance(previous, dict):
+        DOCSET_CACHE_BYTES[workspace_dir] = max(
+            0,
+            DOCSET_CACHE_BYTES.get(workspace_dir, 0) - _estimate_cache_entry_bytes(previous),
+        )
 
     ws_cache[cache_key] = {
         "docs": docs_obj,
@@ -782,16 +1013,26 @@ def _cache_docs_for_workspace(
         "updated_at": _utc_now_iso(),
         "_approx_bytes": approx_bytes,
     }
+    DOCSET_CACHE_BYTES[workspace_dir] = DOCSET_CACHE_BYTES.get(workspace_dir, 0) + approx_bytes
 
     # Evict oldest entries until both count and byte limits are satisfied
-    while len(ws_cache) > cfg.docset_cache_max_entries or _total_cache_bytes(ws_cache) > cfg.docset_cache_max_bytes:
+    while (
+        len(ws_cache) > cfg.docset_cache_max_entries
+        or DOCSET_CACHE_BYTES.get(workspace_dir, 0) > cfg.docset_cache_max_bytes
+    ):
         if len(ws_cache) <= 1:
             break
         oldest_key = sorted(
             ws_cache.keys(),
             key=lambda k: ws_cache[k].get("updated_at", ""),
         )[0]
-        ws_cache.pop(oldest_key, None)
+        removed = ws_cache.pop(oldest_key, None)
+        if isinstance(removed, dict):
+            DOCSET_CACHE_BYTES[workspace_dir] = max(
+                0,
+                DOCSET_CACHE_BYTES.get(workspace_dir, 0)
+                - _estimate_cache_entry_bytes(removed),
+            )
 
 
 def _total_cache_bytes(ws_cache: Dict[str, Dict[str, Any]]) -> int:
@@ -937,8 +1178,19 @@ async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
     Main handler: acquire text via NCBI BioC, index with PaperQA2, run query.
     """
     query = payload.get("query")
-    papers = payload.get("papers", [])
+    papers = payload.get("papers", []) or []
+    documents = payload.get("documents", []) or []
     workspace_dir = payload.get("workspace_dir", os.getcwd())
+    prefer_documents = bool(payload.get("prefer_documents", False))
+    documents_enabled = _parse_env_bool("PQA_ENABLE_DOCUMENT_INPUT", True)
+    if documents and not documents_enabled:
+        raise SidecarEnvelopeError(
+            code=EC_INVALID_REQUEST,
+            message="documents input is disabled by PQA_ENABLE_DOCUMENT_INPUT=false",
+            stage="ipc",
+            retryable=False,
+        )
+    use_documents = prefer_documents or len(documents) > 0
 
     if not query:
         raise SidecarEnvelopeError(
@@ -947,10 +1199,10 @@ async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
             stage="ipc",
             retryable=False,
         )
-    if not papers:
+    if not papers and not documents:
         raise SidecarEnvelopeError(
             code=EC_INVALID_REQUEST,
-            message="Missing papers list",
+            message="Missing papers/documents input",
             stage="ipc",
             retryable=False,
         )
@@ -972,7 +1224,7 @@ async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
     settings, paper_dir, index_dir = build_settings(workspace_dir, cfg)
     papers_manifest, index_manifest = _load_manifests(workspace_dir)
 
-    await preflight_models(settings, cfg.ollama_base)
+    await preflight_models(settings, cfg.ollama_base, cfg.preflight_cache_ttl_seconds)
 
     stage_status = {
         "acquire": "pending",
@@ -980,34 +1232,56 @@ async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
         "query": "pending",
     }
     warnings: List[str] = []
+    if use_documents and papers:
+        warnings.append(
+            "Both papers and documents were provided; documents input took precedence."
+        )
 
     normalized_inputs: List[Tuple[NormalizedIdentifier, Dict[str, Any]]] = []
     validation_errors: List[Dict[str, str]] = []
     dedupe_map: Dict[str, Tuple[NormalizedIdentifier, Dict[str, Any]]] = {}
+    document_dedupe_map: Dict[str, Dict[str, Any]] = {}
 
-    for p in papers:
-        raw_identifier = (p.get("identifier") or "").strip()
-        try:
-            normalized = normalize_identifier(raw_identifier)
-        except SidecarEnvelopeError as exc:
-            validation_errors.append(
-                {
-                    "identifier": raw_identifier,
-                    "code": exc.code,
-                    "detail": exc.message,
-                }
-            )
-            continue
+    if use_documents:
+        for d in documents:
+            source_id = (d.get("source_id") or "").strip() if isinstance(d, dict) else ""
+            if not source_id:
+                validation_errors.append(
+                    {
+                        "identifier": "",
+                        "code": EC_INVALID_DOCUMENT_INPUT,
+                        "detail": "Document entry missing source_id.",
+                    }
+                )
+                continue
+            if source_id in document_dedupe_map:
+                warnings.append(f"Duplicate document deduped: {source_id}")
+                continue
+            document_dedupe_map[source_id] = d
+    else:
+        for p in papers:
+            raw_identifier = (p.get("identifier") or "").strip()
+            try:
+                normalized = normalize_identifier(raw_identifier)
+            except SidecarEnvelopeError as exc:
+                validation_errors.append(
+                    {
+                        "identifier": raw_identifier,
+                        "code": exc.code,
+                        "detail": exc.message,
+                    }
+                )
+                continue
 
-        if normalized.canonical_id in dedupe_map:
-            warnings.append(
-                f"Duplicate identifier deduped: {raw_identifier} -> {normalized.canonical_id}"
-            )
-            continue
+            if normalized.canonical_id in dedupe_map:
+                warnings.append(
+                    f"Duplicate identifier deduped: {raw_identifier} -> {normalized.canonical_id}"
+                )
+                continue
 
-        dedupe_map[normalized.canonical_id] = (normalized, p)
+            dedupe_map[normalized.canonical_id] = (normalized, p)
 
-    normalized_inputs = list(dedupe_map.values())
+        normalized_inputs = list(dedupe_map.values())
 
     # 1) Acquire stage (bounded concurrency)
     acquired_files: List[Dict[str, Any]] = []
@@ -1018,15 +1292,70 @@ async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
     cached_ids: List[str] = []
     negative_cache_hits: List[str] = []
 
-    if normalized_inputs:
+    if use_documents and document_dedupe_map:
+        for source_id, document in document_dedupe_map.items():
+            try:
+                result = _materialize_external_document(
+                    document=document,
+                    paper_dir=paper_dir,
+                    papers_manifest=papers_manifest,
+                    max_text_chars=cfg.max_text_chars,
+                )
+                metadata = (
+                    document.get("metadata")
+                    if isinstance(document.get("metadata"), dict)
+                    else {}
+                )
+                acquired_files.append(
+                    {
+                        "path": result.filepath,
+                        "identifier": result.raw_identifier,
+                        "canonical_id": result.canonical_id,
+                        "title": metadata.get("title"),
+                        "authors": metadata.get("authors", []),
+                        "doi": metadata.get("doi"),
+                        "source": result.source,
+                        "source_hash": result.source_hash,
+                    }
+                )
+                if result.source == "abstract":
+                    abstract_only.append(result.raw_identifier)
+                elif result.source == "cached":
+                    cached_ids.append(result.raw_identifier)
+                else:
+                    full_text_ids.append(result.raw_identifier)
+            except SidecarEnvelopeError as exc:
+                failed_downloads.append(source_id)
+                failed_acquisitions.append(
+                    {
+                        "identifier": source_id,
+                        "canonical_id": source_id,
+                        "code": exc.code,
+                        "detail": exc.message,
+                    }
+                )
+            except Exception as exc:
+                failed_downloads.append(source_id)
+                failed_acquisitions.append(
+                    {
+                        "identifier": source_id,
+                        "canonical_id": source_id,
+                        "code": EC_INVALID_DOCUMENT_INPUT,
+                        "detail": str(exc),
+                    }
+                )
+    elif normalized_inputs:
         import httpx
 
         semaphore = asyncio.Semaphore(cfg.acquire_concurrency)
+
+        id_resolution_map: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
 
         async def _acquire_one(
             normalized: NormalizedIdentifier,
             meta: Dict[str, Any],
             client,
+            resolved_ids: Optional[Tuple[Optional[str], Optional[str]]],
         ) -> AcquireResult:
             async with semaphore:
                 return await acquire_paper_text(
@@ -1034,14 +1363,30 @@ async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
                     paper_dir=paper_dir,
                     papers_manifest=papers_manifest,
                     paper_meta=meta,
+                    resolved_ids=resolved_ids,
                     client=client,
                     max_text_chars=cfg.max_text_chars,
                     negative_cache_ttl_hours=cfg.negative_cache_ttl_hours,
                 )
 
         async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+            lookup_ids = [normalized.lookup_id for normalized, _ in normalized_inputs]
+            id_resolution_map = await _resolve_many_to_pmcid(
+                identifiers=lookup_ids,
+                client=client,
+                email=cfg.email,
+            )
             tasks = [
-                asyncio.create_task(_acquire_one(normalized, meta, client))
+                asyncio.create_task(
+                    _acquire_one(
+                        normalized,
+                        meta,
+                        client,
+                        id_resolution_map.get(
+                            _normalize_lookup_identifier(normalized.lookup_id)
+                        ),
+                    )
+                )
                 for normalized, meta in normalized_inputs
             ]
             acquire_results = await asyncio.gather(*tasks)
@@ -1089,8 +1434,8 @@ async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
 
         result = {
             "answer": (
-                "Could not acquire text for any of the requested papers. "
-                "They may not be available in PMC Open Access or PubMed."
+                "Could not acquire text for any of the requested inputs. "
+                "If using identifiers, they may not be available in PMC Open Access or PubMed."
             ),
             "references": [],
             "context": "",
@@ -1115,11 +1460,40 @@ async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
         _save_manifests(workspace_dir, papers_manifest, index_manifest)
         return result
 
+    test_mode = os.environ.get("PQA_TEST_MODE", "").strip().lower()
+    if test_mode == "stub_query":
+        stage_status["index"] = "success"
+        stage_status["query"] = "success"
+        result = {
+            "answer": f"[stub_query] {query}",
+            "references": [],
+            "context": "stub",
+            "papers_indexed": len(acquired_files),
+            "failed_downloads": failed_downloads,
+            "failed_indexing": [],
+            "failed_acquisitions": failed_acquisitions,
+            "validation_errors": validation_errors,
+            "stage_status": stage_status,
+            "warnings": warnings + ["Used PQA_TEST_MODE=stub_query; skipped indexing/query model calls."],
+            "acquisition_summary": {
+                "full_text": full_text_ids,
+                "abstract_only": abstract_only,
+                "cached": cached_ids,
+                "negative_cache_hits": negative_cache_hits,
+            },
+            "error_code": None,
+            "error_detail": None,
+            "retryable": False,
+        }
+        _save_manifests(workspace_dir, papers_manifest, index_manifest)
+        return result
+
     # 2) Index stage (manifest + in-memory docset cache)
     docs = None
     failed_indexing: List[Dict[str, str]] = []
     indexed_count = 0
     indexed_docs: List[Dict[str, Any]] = []
+    reused_index_ids: List[str] = []
 
     requested_docset_key = _make_docset_cache_key(acquired_files)
     ws_cache = _get_workspace_doc_cache(workspace_dir)
@@ -1134,6 +1508,17 @@ async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
     else:
         docs = Docs()
         for paper in acquired_files:
+            existing_index = index_manifest["entries"].get(paper["canonical_id"])
+            if (
+                isinstance(existing_index, dict)
+                and existing_index.get("indexed_hash") == paper["source_hash"]
+                and existing_index.get("source_path") == paper["path"]
+            ):
+                indexed_count += 1
+                indexed_docs.append(paper)
+                reused_index_ids.append(paper["identifier"])
+                continue
+
             try:
                 authors = paper.get("authors") or []
                 authors_str = ", ".join(authors[:3]) if authors else "Unknown"
@@ -1192,8 +1577,14 @@ async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "source_hashes": {
                         p["canonical_id"]: p["source_hash"] for p in indexed_docs
                     },
+                    "source_paths": {p["canonical_id"]: p["path"] for p in indexed_docs},
                 },
                 cfg=cfg,
+            )
+
+        if reused_index_ids:
+            warnings.append(
+                f"Reused persisted index state for {len(reused_index_ids)} unchanged document(s)."
             )
 
         if indexed_count == len(acquired_files):
@@ -1234,6 +1625,33 @@ async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     # 3) Query stage
     try:
+        test_mode = os.environ.get("PQA_TEST_MODE", "").strip().lower()
+        if test_mode == "stub_query":
+            stage_status["query"] = "success"
+            result = {
+                "answer": f"[stub_query] {query}",
+                "references": [],
+                "context": "stub",
+                "papers_indexed": indexed_count,
+                "failed_downloads": failed_downloads,
+                "failed_indexing": failed_indexing,
+                "failed_acquisitions": failed_acquisitions,
+                "validation_errors": validation_errors,
+                "stage_status": stage_status,
+                "warnings": warnings + ["Used PQA_TEST_MODE=stub_query; skipped LLM query stage."],
+                "acquisition_summary": {
+                    "full_text": full_text_ids,
+                    "abstract_only": abstract_only,
+                    "cached": cached_ids,
+                    "negative_cache_hits": negative_cache_hits,
+                },
+                "error_code": None,
+                "error_detail": None,
+                "retryable": False,
+            }
+            _save_manifests(workspace_dir, papers_manifest, index_manifest)
+            return result
+
         session = await docs.aquery(query, settings=settings)
         stage_status["query"] = "success"
 

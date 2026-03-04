@@ -1,84 +1,145 @@
-import {
-	defineTool,
-	interpretWithMedGemma,
-	resilientFetch,
-	withOptionalSynthesis,
-} from "@medsci/core";
+import { defineTool } from "@medsci/core";
 import { z } from "zod";
 import { EUTILS_BASE } from "../constants";
+import {
+  applyOptionalSynthesis,
+  fetchTextOrError,
+  needsSynthesizedSummaryField,
+  normalizeDoi,
+} from "./shared";
+
+function parsePubmedAbstractXml(xml: string): {
+  title: string;
+  abstract: string;
+  journal: string;
+  year: string;
+  meshTerms: string[];
+  doi?: string;
+} {
+  if (typeof DOMParser === "undefined") {
+    const extract = (tag: string): string => {
+      const match = xml.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "i"));
+      return match?.[1]?.replace(/<[^>]+>/g, "").trim() ?? "";
+    };
+    const extractAll = (tag: string): string[] => {
+      const matches = xml.matchAll(
+        new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "gi"),
+      );
+      return [...matches]
+        .map((m) => m[1].replace(/<[^>]+>/g, "").trim())
+        .filter(Boolean);
+    };
+    const doiMatch = xml.match(
+      /<ArticleId[^>]*IdType=["']doi["'][^>]*>([\s\S]*?)<\/ArticleId>/i,
+    );
+
+    const title = extract("ArticleTitle");
+    if (!title && !xml.includes("<PubmedArticle")) {
+      throw new Error("Unable to parse PubMed XML response");
+    }
+
+    const segments = extractAll("AbstractText");
+    return {
+      title,
+      abstract:
+        segments.length > 0 ? segments.join("\n\n") : extract("Abstract"),
+      journal: extract("Title"),
+      year: extract("Year"),
+      meshTerms: extractAll("DescriptorName").slice(0, 20),
+      doi: normalizeDoi(doiMatch?.[1]?.trim()),
+    };
+  }
+
+  const doc = new DOMParser().parseFromString(xml, "application/xml");
+  const parseError = doc.querySelector("parsererror");
+  if (parseError) {
+    throw new Error("Unable to parse PubMed XML response");
+  }
+
+  const text = (selector: string): string =>
+    doc.querySelector(selector)?.textContent?.trim() ?? "";
+
+  const textAll = (selector: string): string[] =>
+    [...doc.querySelectorAll(selector)]
+      .map((el) => el.textContent?.trim() ?? "")
+      .filter(Boolean);
+
+  const abstractSegments = [
+    ...textAll("Abstract AbstractText"),
+    ...textAll("AbstractText"),
+  ];
+  const abstract =
+    abstractSegments.length > 0 ? abstractSegments.join("\n\n") : text("Abstract");
+
+  const doi = (() => {
+    const articleIdNodes = [...doc.querySelectorAll("ArticleId")];
+    const preferred = articleIdNodes.find(
+      (node) => node.getAttribute("IdType")?.toLowerCase() === "doi",
+    );
+    return normalizeDoi(preferred?.textContent ?? undefined);
+  })();
+
+  if (!doc.querySelector("PubmedArticle, PubmedArticleSet")) {
+    throw new Error("Unable to parse PubMed XML response");
+  }
+
+  return {
+    title: text("ArticleTitle"),
+    abstract,
+    journal: text("Journal Title") || text("Title"),
+    year: text("PubDate Year") || text("ArticleDate Year"),
+    meshTerms: textAll("MeshHeading DescriptorName").slice(0, 20),
+    doi,
+  };
+}
 
 export const fetchAbstract = defineTool({
-	name: "fetch_abstract",
-	description:
-		"Fetch the full abstract and metadata for a PubMed article by PMID. Returns title, abstract text, MeSH terms, and citation information.",
-	schema: z.object({
-		pmid: z.string().min(1).describe("PubMed ID (e.g. '34567890')"),
-		needs_synthesized_summary: z
-			.boolean()
-			.optional()
-			.default(true)
-			.describe(
-				"Set to false to bypass MedGemma context summarization and return raw data",
-			),
-	}),
-	execute: async (input, ctx) => {
-		const url = `${EUTILS_BASE}/efetch.fcgi?db=pubmed&id=${input.pmid}&rettype=abstract&retmode=xml`;
-		const res = await resilientFetch(url, {
-			signal: AbortSignal.timeout(10_000),
-			maxRetries: 3,
-		});
+  name: "fetch_abstract",
+  description:
+    "Fetch abstract text and key metadata for a PubMed article by PMID. Returns abstract text, title, MeSH terms, journal, publication year, and DOI when available.",
+  schema: z.object({
+    pmid: z.string().min(1).describe("PubMed ID (e.g. '34567890')"),
+    needs_synthesized_summary: needsSynthesizedSummaryField,
+  }),
+  execute: async (input, ctx) => {
+    const url = `${EUTILS_BASE}/efetch.fcgi?db=pubmed&id=${encodeURIComponent(input.pmid)}&rettype=abstract&retmode=xml`;
 
-		if (!res.ok) {
-			return { success: false, error: `PubMed fetch failed: ${res.status}` };
-		}
+    const response = await fetchTextOrError(url, "PubMed fetch failed", 10_000);
+    if (!response.ok) {
+      return {
+        success: false,
+        error: response.error,
+      };
+    }
 
-		const xml = await res.text();
+    const parsed = parsePubmedAbstractXml(response.data);
+    const articleData = {
+      pmid: input.pmid,
+      title: parsed.title,
+      abstract: parsed.abstract,
+      journal: parsed.journal,
+      year: parsed.year,
+      doi: parsed.doi,
+      mesh_terms: parsed.meshTerms,
+      content_level: "abstract",
+    };
 
-		// Regex-based XML extraction. Acceptable here because PubMed eFetch XML
-		// uses a flat, predictable schema with no nested same-name tags or CDATA.
-		// A full XML parser would add a dependency for no practical benefit.
-		const extract = (tag: string): string => {
-			const match = xml.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`));
-			return match?.[1]?.replace(/<[^>]+>/g, "").trim() ?? "";
-		};
+    const data = await applyOptionalSynthesis(
+      ctx,
+      input.needs_synthesized_summary ?? true,
+      articleData,
+      { title: parsed.title, abstract: parsed.abstract, doi: parsed.doi },
+      "Extract key findings, methods, and clinical relevance from this abstract. " +
+        "Highlight novelty and any important caveats.",
+    );
 
-		const extractAll = (tag: string): string[] => {
-			const matches = xml.matchAll(
-				new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "g"),
-			);
-			return [...matches].map((m) => m[1].replace(/<[^>]+>/g, "").trim());
-		};
-
-		const title = extract("ArticleTitle");
-		const abstract = extract("AbstractText") || extract("Abstract");
-		const journal = extract("Title");
-		const year = extract("Year");
-		const meshTerms = extractAll("DescriptorName");
-
-		const articleData = {
-			pmid: input.pmid,
-			title,
-			abstract,
-			journal,
-			year,
-			mesh_terms: meshTerms.slice(0, 20),
-		};
-
-		const data = await withOptionalSynthesis(
-			input.needs_synthesized_summary ?? true,
-			articleData,
-			() =>
-				interpretWithMedGemma(
-					ctx,
-					{ title, abstract },
-					"Extract the key findings, methods, and clinical relevance from this article. " +
-						"Highlight any novel contributions and potential impact on patient care.",
-				),
-		);
-
-		return {
-			success: true,
-			data,
-		};
-	},
+    return {
+      success: true,
+      data,
+    };
+  },
 });
+
+export const __testing = {
+  parsePubmedAbstractXml,
+};
