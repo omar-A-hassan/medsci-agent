@@ -52,6 +52,24 @@
 		}
 	},
 	"mcp": {
+		"ace-mcp": {
+			"type": "local",
+			"command": [
+				"bash",
+				"-lc",
+				"if [ -x packages/server-paperqa/.venv-paperqa/bin/ace-mcp ]; then exec packages/server-paperqa/.venv-paperqa/bin/ace-mcp; elif command -v ace-mcp >/dev/null 2>&1; then exec ace-mcp; else echo 'ace-mcp not found. Install with: pip install \"ace-framework[mcp]\" (ideally into packages/server-paperqa/.venv-paperqa)' >&2; exit 1; fi"
+			],
+			"timeout": 300000,
+			"environment": {
+				"ACE_MCP_DEFAULT_MODEL": "openai/gpt-4o-mini",
+				"ACE_MCP_SAFE_MODE": "false",
+				"ACE_MCP_ALLOW_SAVE_LOAD": "true",
+				"ACE_MCP_SESSION_TTL_SECONDS": "86400",
+				"ACE_MCP_LEARN_TIMEOUT_SECONDS": "300",
+				"ACE_MCP_MAX_SAMPLES_PER_CALL": "10",
+				"ACE_MCP_SKILLBOOK_ROOT": ".opencode/ace/skillbooks"
+			}
+		},
 		"medsci-omics": {
 			"type": "local",
 			"command": ["bun", "run", "packages/server-omics/src/index.ts"],

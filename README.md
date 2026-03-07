@@ -220,6 +220,47 @@ The included `opencode.json` is pre-configured. Set the `model` field to your pr
 
 Update the `MEDSCI_PYTHON` path in each server's environment block if your virtual environment is in a different location.
 
+### 4.1 Optional: Enable ACE MCP (self-improvement layer)
+
+MedSci now supports optional ACE MCP integration for adaptive strategy learning.
+
+Install ACE MCP in the PaperQA/acquisition virtual environment (recommended):
+
+```bash
+source packages/server-paperqa/.venv-paperqa/bin/activate
+pip install "ace-framework[mcp]"
+```
+
+Configured MCP server name: `ace-mcp` (in `opencode.json`)
+
+ACE model default in this repo: `openai/gpt-4o-mini` (set via `ACE_MCP_DEFAULT_MODEL`).
+
+Credential model for ACE:
+- ACE runs as a separate MCP process and needs provider credentials available in that process environment.
+- If you use OpenAI for ACE, export `OPENAI_API_KEY` before starting OpenCode.
+- If you use Anthropic/Gemini/Mistral/etc for ACE, set the corresponding provider key env var.
+- ACE can use the same cloud provider/model family you use in OpenCode, but it does not automatically inherit the currently selected chat model unless you configure `ACE_MCP_DEFAULT_MODEL` accordingly.
+- ACE in this setup is intentionally decoupled from local MedSci models (`medgemma`, `txgemma`, PaperQA embedding model) and should not use them unless you explicitly reconfigure it.
+
+Default behavior in MedSci:
+- in-run reflection is read-only (`ace.ask` / `ace.skillbook.get`)
+- automatic post-run learning is triggered by plugin guardrails (gated by evidence quality)
+- manual fallback remains available via `/ace-learn`
+
+Skillbooks are persisted under `.opencode/ace/skillbooks/`.
+
+Why ACE is installed in `packages/server-paperqa/.venv-paperqa` (not the core `.venv`):
+- ACE learning is orchestration/synthesis logic, closest to the PaperQA + acquisition stack.
+- Keeping ACE out of the core scientific sidecar avoids dependency drift for RDKit/Scanpy/BioPython workflows.
+- This preserves strict environment separation and reduces breakage risk in domain toolchains.
+
+Example override:
+
+```bash
+export ACE_MCP_DEFAULT_MODEL="anthropic/claude-3-5-sonnet-latest"
+export ANTHROPIC_API_KEY="..."
+```
+
 ### 5. Run tests
 
 ```bash
@@ -253,6 +294,8 @@ This repo ships OpenCode slash commands under `.opencode/commands`:
 - `/sandbox-job` — sandbox lifecycle run (`prepare → run_job → status(advisory) → fetch → teardown`)
 - `/qc-check` — maker-checker quality gate on scientific outputs
 - `/handoff-report` — compact handoff for next agent/human
+- `/ace-learn` — manual ACE learning fallback/override for a completed task
+- `/ace-strategies` — inspect ACE strategy state for a domain/session
 
 ### Sandbox command default
 
@@ -341,6 +384,8 @@ Project plugin: `.opencode/plugins/medsci-guardrails.ts`
 
 - Blocks reading sensitive `.env` files via the `read` tool (allows `.env.example`)
 - Logs tool telemetry (`tool`, `session_id`, `duration_ms`, `failed`) via `client.app.log`
+- Adds ACE telemetry tags (`ace_tool`, `ace_learning_write`) for auditability
+- Triggers automatic post-run `/ace-learn` command execution when high-signal tool evidence is present
 
 The `MEDSCI_PROFILE` setting controls which Python libraries are pre-imported when the sidecar starts. All tools work regardless of profile — the sidecar imports libraries lazily on first use — but pre-importing avoids a cold-start delay on the first call.
 

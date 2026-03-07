@@ -3,4 +3,5 @@ litellm
 httpx
 scrapling
 beautifulsoup4
+ace-framework[mcp]
 pytest>=8.0.0

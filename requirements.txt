@@ -5,3 +5,8 @@ leidenalg>=0.9.0
 igraph>=0.10.0
 pynndescent>=0.5.0
 pytest>=8.0.0
+
+# NOTE:
+# ACE MCP dependency is intentionally installed in
+# packages/server-paperqa/requirements.txt to keep the core scientific
+# sidecar environment stable and decoupled.

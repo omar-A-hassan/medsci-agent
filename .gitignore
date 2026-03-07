@@ -19,3 +19,20 @@ tests/
 # Local sandbox runtime artifacts
 sb/
 sandbox-artifacts/
+
+# Codex local configuration
+.codex/
+
+# Claude Flow runtime data
+.claude-flow/data/
+.claude-flow/logs/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.claude-flow
+.claude
+.agents
+.swarm
+.mcp.json
