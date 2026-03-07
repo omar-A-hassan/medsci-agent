@@ -464,6 +464,7 @@ This project builds on the following work:
 - **Prompt Repetition** ([Leviathan, Kalman & Matias, 2025](https://arxiv.org/abs/2512.14982)) — Our `interpretWithMedGemma` function repeats the instruction after the data context to improve non-reasoning model accuracy.
 - **TxGemma** ([Wang, Schmidgall, Jaeger et al., 2025](https://arxiv.org/abs/2504.06196)) — ADMET prediction uses verbatim prompt templates from Google's TxGemma, trained on [Therapeutics Data Commons](https://tdcommons.ai) benchmarks.
 - **PaperQA2** ([Future-House/paper-qa](https://github.com/Future-House/paper-qa)) — Deep literature synthesis and RAG is powered by FutureHouse's PaperQA2 library, with text acquired via NCBI's BioC API.
+- **Agentic Context Engine (ACE)** ([kayba-ai/agentic-context-engine](https://github.com/kayba-ai/agentic-context-engine)) — ACE MCP integration powers MedSci's strategy-learning and post-run self-improvement loop.
 - **K-Dense Scientific Skills** ([K-Dense-AI/claude-scientific-skills](https://github.com/K-Dense-AI/claude-scientific-skills)) — The OpenCode skills in this project are adapted from K-Dense AI's open-source collection of 147+ scientific skills for AI agents.
 
 ---
