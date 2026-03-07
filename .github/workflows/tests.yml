@@ -19,17 +19,18 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
 
       - name: Install Bun dependencies
         run: bun install --frozen-lockfile
 
-      - name: Create PaperQA virtual environment
+      - name: Sync PaperQA+ACE environment with uv
         run: |
-          python -m pip install --upgrade pip
-          python -m venv packages/server-paperqa/.venv-paperqa
-          packages/server-paperqa/.venv-paperqa/bin/python -m pip install --upgrade pip
-          packages/server-paperqa/.venv-paperqa/bin/pip install -r packages/server-paperqa/requirements.txt
+          uv venv packages/server-paperqa/.venv-paperqa
+          VIRTUAL_ENV=packages/server-paperqa/.venv-paperqa uv sync --active --no-default-groups --group paperqa --group ace --group test
 
       - name: Verify Scrapling dependency in PaperQA venv
         run: |

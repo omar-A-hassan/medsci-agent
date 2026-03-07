@@ -7,6 +7,9 @@
 		"packages/*"
 	],
 	"scripts": {
+		"setup:py:core": "uv venv .venv && VIRTUAL_ENV=.venv uv sync --active --no-default-groups --group scientific --group test",
+		"setup:py:paperqa": "uv venv packages/server-paperqa/.venv-paperqa && VIRTUAL_ENV=packages/server-paperqa/.venv-paperqa uv sync --active --no-default-groups --group paperqa --group ace --group test",
+		"setup:py:all": "bun run setup:py:core && bun run setup:py:paperqa",
 		"test": "bun test --recursive",
 		"test:coverage": "bun test --recursive --coverage",
 		"typecheck": "tsc --noEmit",

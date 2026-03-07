@@ -150,7 +150,7 @@ The **Python sidecar** is a long-running process that pre-imports scientific lib
 ### Prerequisites
 
 - [Bun](https://bun.sh) >= 1.1
-- Python 3.10+ with a virtual environment
+- [uv](https://docs.astral.sh/uv/) (Python package and environment manager)
 - [Ollama](https://ollama.com)
 - [OpenCode](https://opencode.ai)
 - Docker Desktop / Docker Engine
@@ -166,29 +166,29 @@ bun install
 
 ### 2. Python environments
 
-The system uses two strictly decoupled Python virtual environments. This is intentional and avoids a third scientific environment.
+The system uses two strictly decoupled Python virtual environments, both managed with `uv`.
 
 **Core Environment (Required):**
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+bun run setup:py:core
 ```
 
 **PaperQA + Acquisition Environment (Required for strict full-text retrieval and deep synthesis):**
 ```bash
-cd packages/server-paperqa
-python3 -m venv .venv-paperqa
-source .venv-paperqa/bin/activate
-pip install -r requirements.txt
-cd ../..
+bun run setup:py:paperqa
+```
+
+Or run both in one command:
+
+```bash
+bun run setup:py:all
 ```
 
 > **Important:** Set `MEDSCI_PYTHON` to `.venv/bin/python3` for core tools. Both `medsci-paperqa` and `medsci-acquisition` should run with `packages/server-paperqa/.venv-paperqa/bin/python3` to keep Scrapling and PaperQA dependencies in one environment.
 >
 > Dependency ownership:
-> - `.venv` (`requirements.txt`): core science sidecars (RDKit/BioPython/Scanpy and related tool stacks).
-> - `packages/server-paperqa/.venv-paperqa` (`packages/server-paperqa/requirements.txt`): PaperQA + acquisition parsing stack (`paper-qa`, `scrapling`, `beautifulsoup4`).
+> - `.venv` (uv groups: `scientific`, `test`): core science sidecars (RDKit/BioPython/Scanpy and related tool stacks).
+> - `packages/server-paperqa/.venv-paperqa` (uv groups: `paperqa`, `ace`, `test`): PaperQA + acquisition parsing + ACE stack.
 
 ### 3. Pull Ollama models
 
@@ -227,8 +227,7 @@ MedSci now supports optional ACE MCP integration for adaptive strategy learning.
 Install ACE MCP in the PaperQA/acquisition virtual environment (recommended):
 
 ```bash
-source packages/server-paperqa/.venv-paperqa/bin/activate
-pip install "ace-framework[mcp]"
+bun run setup:py:paperqa
 ```
 
 Configured MCP server name: `ace-mcp` (in `opencode.json`)

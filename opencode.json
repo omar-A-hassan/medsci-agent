@@ -57,7 +57,7 @@
 			"command": [
 				"bash",
 				"-lc",
-				"if [ -x packages/server-paperqa/.venv-paperqa/bin/ace-mcp ]; then exec packages/server-paperqa/.venv-paperqa/bin/ace-mcp; elif command -v ace-mcp >/dev/null 2>&1; then exec ace-mcp; else echo 'ace-mcp not found. Install with: pip install \"ace-framework[mcp]\" (ideally into packages/server-paperqa/.venv-paperqa)' >&2; exit 1; fi"
+				"if [ -x packages/server-paperqa/.venv-paperqa/bin/ace-mcp ]; then exec packages/server-paperqa/.venv-paperqa/bin/ace-mcp; elif command -v ace-mcp >/dev/null 2>&1; then exec ace-mcp; else echo 'ace-mcp not found. Run: bun run setup:py:paperqa (or uv sync group paperqa+ace into packages/server-paperqa/.venv-paperqa)' >&2; exit 1; fi"
 			],
 			"timeout": 300000,
 			"environment": {

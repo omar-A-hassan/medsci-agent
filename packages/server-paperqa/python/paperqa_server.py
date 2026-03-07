@@ -1214,7 +1214,7 @@ async def handle_analyze_papers(payload: Dict[str, Any]) -> Dict[str, Any]:
             code=EC_DEPENDENCY_MISSING,
             message=(
                 "paper-qa library is not installed. Activate .venv-paperqa and "
-                "run: pip install -r requirements.txt"
+                "run: bun run setup:py:paperqa"
             ),
             stage="startup",
             retryable=False,
