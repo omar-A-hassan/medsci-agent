@@ -61,7 +61,7 @@
 			],
 			"timeout": 300000,
 			"environment": {
-				"ACE_MCP_DEFAULT_MODEL": "openai/gpt-4o-mini",
+				"ACE_MCP_DEFAULT_MODEL": "openrouter/free",
 				"ACE_MCP_SAFE_MODE": "false",
 				"ACE_MCP_ALLOW_SAVE_LOAD": "true",
 				"ACE_MCP_SESSION_TTL_SECONDS": "86400",

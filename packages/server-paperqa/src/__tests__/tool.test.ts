@@ -95,6 +95,51 @@ describe("search_and_analyze (IPC Serialization & Schema Boundaries)", () => {
 		expect(result.success).toBe(true);
 	});
 
+	test("accepts legacy papers string array and normalizes to object shape", async () => {
+		pqaSidecar.isRunning = mock(() => true);
+		pqaSidecar.start = mock(() => Promise.resolve());
+
+		pqaSidecar.call = mock(async <T = unknown>(method: string, data: any) => {
+			expect(method).toBe("analyze_papers");
+			expect(data.query).toBe("Test legacy papers format");
+			expect(data.papers).toEqual([
+				{ identifier: "10.1038/ncomms3192" },
+				{ identifier: "10.1007/s00125-017-4342-z" },
+			]);
+			return {
+				answer: "ok",
+				references: [],
+				context: "",
+				stage_status: { acquire: "success", index: "success", query: "success" },
+				warnings: [],
+			} as unknown as T;
+		}) as any;
+
+		const parseResult = searchAndAnalyzeTool.schema.safeParse({
+			query: "Test legacy papers format",
+			papers: ["10.1038/ncomms3192", "10.1007/s00125-017-4342-z"],
+		});
+		expect(parseResult.success).toBe(true);
+		if (parseResult.success) {
+			expect(parseResult.data.papers).toEqual([
+				{ identifier: "10.1038/ncomms3192" },
+				{ identifier: "10.1007/s00125-017-4342-z" },
+			]);
+		}
+
+		const ctx = createMockContext();
+		const result = await searchAndAnalyzeTool.execute(
+			{
+				query: "Test legacy papers format",
+				papers: ["10.1038/ncomms3192", "10.1007/s00125-017-4342-z"] as any,
+			},
+			ctx,
+		);
+
+		expect(result.success).toBe(true);
+		expect(pqaSidecar.call).toHaveBeenCalledTimes(1);
+	});
+
 	test("rejects missing papers and documents", () => {
 		const input = { query: "Test", papers: [], documents: [] };
 		const result = searchAndAnalyzeTool.schema.safeParse(input);

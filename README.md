@@ -232,7 +232,12 @@ bun run setup:py:paperqa
 
 Configured MCP server name: `ace-mcp` (in `opencode.json`)
 
-ACE model default in this repo: `openai/gpt-4o-mini` (set via `ACE_MCP_DEFAULT_MODEL`).
+ACE model default in this repo (test default): `openrouter/free` (set via `ACE_MCP_DEFAULT_MODEL`).
+For production, switch models per shell/session with:
+
+```bash
+export ACE_MCP_DEFAULT_MODEL="your/provider-model"
+```
 
 Credential model for ACE:
 - ACE runs as a separate MCP process and needs provider credentials available in that process environment.

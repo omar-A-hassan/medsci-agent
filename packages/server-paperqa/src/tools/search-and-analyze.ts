@@ -58,7 +58,7 @@ interface AnalyzePapersSidecarResponse {
 }
 
 const paperInputSchema = z.object({
-  identifier: z.string().describe("DOI (e.g., '10.1038/s41586...') or PMID"),
+  identifier: z.string().trim().min(1).describe("DOI (e.g., '10.1038/s41586...') or PMID"),
   title: z.string().optional().describe("Pre-seeded title to bypass N+1 network lookups"),
   authors: z.array(z.string()).optional().describe("Pre-seeded authors list"),
   citation_count: z.number().optional().describe("Pre-seeded citation count"),
@@ -102,14 +102,22 @@ export const searchAndAnalyzeTool = defineTool({
     .object({
       query: z.string().describe("The research question to ask against the papers"),
       papers: z
-        .array(paperInputSchema)
+        .array(
+          z.preprocess(
+            (value) =>
+              typeof value === "string"
+                ? { identifier: value.trim() }
+                : value,
+            paperInputSchema,
+          ),
+        )
         .max(
           10,
           "STRICT LIMIT: Maximum 10 papers allowed per analysis chunk to prevent OOM/network failures.",
         )
         .optional()
         .default([])
-        .describe("Paper identifiers for internal acquisition (legacy path)."),
+        .describe("Paper identifiers for internal acquisition. Accepts objects or legacy string identifiers."),
       documents: z
         .array(documentInputSchema)
         .max(
