@@ -1,7 +1,7 @@
 ---
 description: "ACE learning controller — executes ace-mcp tools directly with no planning overhead"
 mode: primary
-steps: 5
+steps: 10
 temperature: 0.0
 tools:
   ace-mcp.*: true
