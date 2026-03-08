@@ -4,6 +4,10 @@
 	"description": "Shared core: tool factory, model clients, Python sidecar, types, config",
 	"main": "src/index.ts",
 	"types": "src/index.ts",
+	"exports": {
+		".": "./src/index.ts",
+		"./testing": "./src/__tests__/test-helpers.ts"
+	},
 	"scripts": {
 		"test": "bun test",
 		"typecheck": "tsc --noEmit"

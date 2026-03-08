@@ -15,6 +15,7 @@
 		"baseUrl": ".",
 		"paths": {
 			"@medsci/core": ["packages/core/src"],
+			"@medsci/core/testing": ["packages/core/src/__tests__/test-helpers"],
 			"@medsci/core/*": ["packages/core/src/*"]
 		},
 		"types": ["bun-types"]

@@ -26,7 +26,6 @@ export type {
 	OllamaClientInterface,
 	PythonSidecarInterface,
 	GenerateOpts,
-	ClassifyResult,
 	SidecarRequest,
 	SidecarResponse,
 	SidecarErrorEnvelope,
@@ -44,6 +43,4 @@ export type {
 
 export { PROFILES } from "./types";
 
-// Test utilities — only used by test files across packages
-export { createMockContext } from "./__tests__/test-helpers";
 export { resilientFetch } from "./utils";

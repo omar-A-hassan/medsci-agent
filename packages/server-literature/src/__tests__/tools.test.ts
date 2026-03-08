@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createMockContext } from "@medsci/core";
+import { createMockContext } from "@medsci/core/testing";
 import { fetchAbstract } from "../tools/fetch-abstract";
 import { searchClinicalTrials } from "../tools/search-clinical-trials";
 import { searchOpenAlex } from "../tools/search-openalex";

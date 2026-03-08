@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createMockContext } from "@medsci/core";
+import { createMockContext } from "@medsci/core/testing";
 import { acquireDocuments } from "../tools/acquire-documents";
 import { resolveIdentifierToSources } from "../tools/resolve-identifier-to-sources";
 import { __testing as acquireTesting } from "../tools/acquire-documents";

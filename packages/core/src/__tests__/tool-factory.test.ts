@@ -15,14 +15,6 @@ function createMockContext(overrides?: Partial<ToolContext>): ToolContext {
 		ollama: {
 			generate: mock(() => Promise.resolve("mock response")),
 			generateJson,
-			embed: mock(() => Promise.resolve([0.1, 0.2, 0.3])),
-			classify: mock(() =>
-				Promise.resolve({
-					label: "positive",
-					score: 0.9,
-					allScores: { positive: 0.9 },
-				}),
-			),
 			isAvailable: mock(() => Promise.resolve(true)),
 		},
 		python: {

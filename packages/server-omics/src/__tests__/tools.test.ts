@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createMockContext } from "@medsci/core";
+import { createMockContext } from "@medsci/core/testing";
 import { differentialExpression } from "../tools/differential-expression";
 import { geneSetEnrichment } from "../tools/gene-set-enrichment";
 

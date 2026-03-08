@@ -23,10 +23,6 @@ export function createMockContext(overrides?: {
 			generateJson: mock(<T = unknown>() =>
 				Promise.resolve((overrides?.generateJsonResponse ?? {}) as T),
 			) as any,
-			embed: mock(() => Promise.resolve([])),
-			classify: mock(() =>
-				Promise.resolve({ label: "ok", score: 0.9, allScores: {} }),
-			),
 			isAvailable: mock(() => Promise.resolve(true)),
 		},
 		python: {

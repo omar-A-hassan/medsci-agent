@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createMockContext } from "@medsci/core";
+import { createMockContext } from "@medsci/core/testing";
 import { analyzeMedicalImage } from "../tools/analyze-medical-image";
 
 // We need to mock fs/promises for stat and readFile

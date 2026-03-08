@@ -1,5 +1,4 @@
 import type {
-	ClassifyResult,
 	GenerateOpts,
 	OllamaClientInterface,
 } from "../types";
@@ -92,76 +91,4 @@ export class OllamaClient implements OllamaClientInterface {
 		return JSON.parse(cleaned) as T;
 	}
 
-	/** @reserved — not yet used by any tool; kept for future semantic search */
-	async embed(text: string, model?: string): Promise<number[]> {
-		const res = await fetch(`${this.baseUrl}/api/embed`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				model: model ?? this.defaultModel,
-				input: text,
-			}),
-			signal: AbortSignal.timeout(this.timeoutMs),
-		});
-
-		if (!res.ok) {
-			const errText = await res.text().catch(() => "");
-			throw new Error(
-				`Ollama embed failed (${res.status}): ${errText || res.statusText}`,
-			);
-		}
-
-		const json = (await res.json()) as { embeddings: number[][] };
-		return json.embeddings[0];
-	}
-
-	/**
-	 * @reserved — not yet used by any tool; kept for future classification pipelines.
-	 * Classification via constrained prompting.
-	 * Asks the model to pick one label and return a confidence score.
-	 */
-	async classify(prompt: string, labels: string[]): Promise<ClassifyResult> {
-		const system = [
-			"You are a classification model. Given the input, respond ONLY with valid JSON.",
-			`Choose exactly one label from: ${JSON.stringify(labels)}.`,
-			'Format: {"label":"chosen_label","score":0.95}',
-			"score is your confidence between 0 and 1.",
-		].join(" ");
-
-		try {
-			const parsed = await this.generateJson<{
-				label: string;
-				score: number;
-			}>(prompt, {
-				system,
-				temperature: 0.1,
-				maxTokens: 100,
-			});
-			if (!labels.includes(parsed.label)) {
-				throw new Error(`Model returned unknown label: ${parsed.label}`);
-			}
-			return {
-				label: parsed.label,
-				score: parsed.score,
-				allScores: { [parsed.label]: parsed.score },
-			};
-		} catch (err) {
-			// Fallback: try to find a label in the raw text
-			const raw = await this.generate(prompt, {
-				system,
-				temperature: 0.1,
-				maxTokens: 100,
-			});
-			const found = labels.find((l) =>
-				raw.toLowerCase().includes(l.toLowerCase()),
-			);
-			return {
-				label: found ?? labels[0],
-				score: found ? 0.5 : 0.1,
-				allScores: Object.fromEntries(
-					labels.map((l) => [l, l === found ? 0.5 : 0.1]),
-				),
-			};
-		}
-	}
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createMockContext } from "@medsci/core";
+import { createMockContext } from "@medsci/core/testing";
 import { predictStructure } from "../tools/predict-structure";
 import { searchPdb } from "../tools/search-pdb";
 import { searchUniprot } from "../tools/search-uniprot";

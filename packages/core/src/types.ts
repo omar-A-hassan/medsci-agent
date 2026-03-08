@@ -70,10 +70,6 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
 export interface OllamaClientInterface {
 	generate(prompt: string, opts?: GenerateOpts): Promise<string>;
 	generateJson<T = unknown>(prompt: string, opts?: GenerateOpts): Promise<T>;
-	/** @reserved — not yet used by any tool; kept for future semantic search */
-	embed(text: string, model?: string): Promise<number[]>;
-	/** @reserved — not yet used by any tool; kept for future classification pipelines */
-	classify(prompt: string, labels: string[]): Promise<ClassifyResult>;
 	isAvailable(): Promise<boolean>;
 }
 
@@ -84,12 +80,6 @@ export interface GenerateOpts {
 	system?: string;
 	/** Base64-encoded images for multimodal models (e.g. MedGemma vision) */
 	images?: string[];
-}
-
-export interface ClassifyResult {
-	label: string;
-	score: number;
-	allScores: Record<string, number>;
 }
 
 // ---------------------------------------------------------------------------

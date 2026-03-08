@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { createMockContext } from "@medsci/core";
+import { createMockContext } from "@medsci/core/testing";
 import { DockerSandboxBackend } from "../backend/docker-sandbox-backend";
 import type { CliResult, CommandRunner } from "../backend/types";
 import { sandboxFetchArtifact } from "../tools/sandbox-fetch-artifact";
