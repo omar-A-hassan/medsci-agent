@@ -25,6 +25,8 @@ Execute all MCP tool calls one at a time. Wait for each result before calling th
 
 **Why:** MedGemma and TxGemma run locally inside MCP tools. Parallel calls queue on the same local model, causing MCP timeouts (error -32001).
 
+**Prohibited language in plans:** Never write "I can run these in parallel", "these steps are independent", "simultaneously", or "at the same time" for tool calls. Every step executes sequentially — perceived independence is irrelevant. Write your plan as a numbered sequence and execute step 1 immediately after the plan.
+
 ## 3. Retry and Stop Policy
 
 - **Per-tool retry limit:** 1 retry on transient failure (timeout, rate limit). If it fails twice, skip it.

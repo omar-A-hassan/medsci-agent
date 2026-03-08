@@ -156,33 +156,37 @@ export const predictAdmet = defineTool({
 			return { success: false, error: props.error ?? "Invalid SMILES" };
 		}
 
-		// Step 2: Run TxGemma-predict for each ADMET endpoint (batched via Promise.all)
+		// Step 2: Run TxGemma-predict for each ADMET endpoint sequentially.
 		// Each call uses the TDC prompt format the model was trained on.
 		const predictions: Record<string, string> = {};
 		let txgemma_used = false;
 
-		const results = await Promise.all(
-			ADMET_ENDPOINTS.map(async (endpoint) => {
-				const prompt = endpoint.prompt.replace("{Drug SMILES}", input.smiles);
-				try {
-					const raw = await ctx.ollama.generate(prompt, {
-						model: TXGEMMA_MODEL,
-						temperature: 0,
-						maxTokens: 10,
-					});
-					const parsed = parseBinaryPrediction(raw, endpoint.positive);
-					if (parsed !== null) {
-						return {
-							name: endpoint.name,
-							label: parsed ? endpoint.positiveLabel : endpoint.negativeLabel,
-						};
-					}
-					return { name: endpoint.name, label: null };
-				} catch {
-					return { name: endpoint.name, label: null };
-				}
-			}),
-		);
+		// Sequential — Ollama is single-instance; concurrent requests queue internally
+		// and burn timeout budget while waiting. Sequential ensures each call gets the
+		// full timeout window for actual inference (including cold-start model load).
+		const results: Array<{ name: string; label: string | null }> = [];
+		for (const endpoint of ADMET_ENDPOINTS) {
+			const prompt = endpoint.prompt.replace("{Drug SMILES}", input.smiles);
+			try {
+				const raw = await ctx.ollama.generate(prompt, {
+					model: TXGEMMA_MODEL,
+					temperature: 0,
+					maxTokens: 10,
+				});
+				const parsed = parseBinaryPrediction(raw, endpoint.positive);
+				results.push({
+					name: endpoint.name,
+					label:
+						parsed !== null
+							? parsed
+								? endpoint.positiveLabel
+								: endpoint.negativeLabel
+							: null,
+				});
+			} catch {
+				results.push({ name: endpoint.name, label: null });
+			}
+		}
 
 		for (const r of results) {
 			if (r.label !== null) {

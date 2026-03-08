@@ -1,6 +1,6 @@
 ---
 description: Inspect ACE skillbook strategies for a MedSci domain session
-agent: medsci
+agent: ace
 ---
 
 Inspect ACE strategies for this session/domain:
