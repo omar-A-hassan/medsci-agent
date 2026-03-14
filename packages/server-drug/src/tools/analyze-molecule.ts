@@ -1,4 +1,4 @@
-import { defineTool, interpretWithMedGemma } from "@medsci/core";
+import { defineTool, interpretWithMedGemma, withOptionalSynthesis } from "@medsci/core";
 import { z } from "zod";
 
 export const analyzeMolecule = defineTool({
@@ -7,6 +7,7 @@ export const analyzeMolecule = defineTool({
 		"Analyze a molecule from its SMILES string. Returns physicochemical properties: molecular weight, LogP, H-bond donors/acceptors, TPSA, rotatable bonds, ring count, and molecular formula.",
 	schema: z.object({
 		smiles: z.string().min(1).describe("SMILES string of the molecule"),
+		synthesize: z.boolean().optional().describe("Set to false to skip MedGemma synthesis and return raw data"),
 	}),
 	execute: async (input, ctx) => {
 		const data = await ctx.python.call<{
@@ -28,13 +29,16 @@ export const analyzeMolecule = defineTool({
 			return { success: false, error: data.error ?? "Invalid SMILES" };
 		}
 
-		const { interpretation, model_used } = await interpretWithMedGemma(
-			ctx,
-			data,
-			"Assess this molecule's drug-likeness based on its physicochemical properties. " +
-				"Comment on oral bioavailability, membrane permeability, and any red flags.",
-		);
-
-		return { success: true, data: { ...data, interpretation, model_used } };
+		return {
+			success: true,
+			data: await withOptionalSynthesis(input.synthesize ?? true, data, () =>
+				interpretWithMedGemma(
+					ctx,
+					data,
+					"Assess this molecule's drug-likeness based on its physicochemical properties. " +
+						"Comment on oral bioavailability, membrane permeability, and any red flags.",
+				),
+			),
+		};
 	},
 });

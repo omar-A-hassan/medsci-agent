@@ -43,4 +43,4 @@ export type {
 
 export { PROFILES } from "./types";
 
-export { resilientFetch } from "./utils";
+export { resilientFetch, Semaphore, HostLimiter } from "./utils";

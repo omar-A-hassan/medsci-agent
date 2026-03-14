@@ -81,6 +81,8 @@ Cloud LLM (user's choice via OpenCode)
 
 The **Python sidecar** is a long-running process that pre-imports scientific libraries and handles requests over stdin/stdout via JSON-RPC. This avoids the 2–5 second startup cost of importing RDKit or Scanpy on every call.
 
+**`synthesize` parameter:** Every drug, protein, and omics tool accepts an optional `"synthesize": false` input field. When `false`, the tool skips the MedGemma interpretation step and returns raw data immediately. This is useful when you want fast data-only results, or when Ollama is unavailable. Default is `true` (synthesis enabled).
+
 ---
 
 ## Tools
@@ -147,14 +149,54 @@ The **Python sidecar** is a long-running process that pre-imports scientific lib
 
 ## Setup
 
+### Fresh install — complete sequence
+
+```bash
+# 1. Install Bun and uv (if not already installed)
+curl -fsSL https://bun.sh/install | bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. Clone and install JS/TS dependencies
+git clone https://github.com/omar-A-hassan/medsci-agent.git
+cd medsci-agent
+bun install
+
+# 3. Create Python environments
+bun run setup:py:core     # RDKit + BioPython + Scanpy → .venv/
+bun run setup:py:paperqa  # PaperQA + Scrapling + ACE → packages/server-paperqa/.venv-paperqa/
+
+# 4. Pull Ollama models (Ollama must be installed first: https://ollama.com)
+ollama pull medgemma:latest
+ollama pull mxbai-embed-large
+ollama pull hf.co/matrixportalx/txgemma-2b-predict-GGUF:Q4_K_M
+
+# 5. (Optional) Export API keys for cloud features — do this BEFORE starting OpenCode
+export OPENROUTER_API_KEY="sk-or-..."   # needed for ACE MCP and cloud PaperQA
+export ANTHROPIC_API_KEY="sk-ant-..."  # only if using Anthropic directly
+
+# 6. Verify setup
+bun run typecheck
+bun test
+
+# 7. Open in OpenCode
+opencode  # MCP servers start automatically via opencode.json
+```
+
+The `opencode.json` is pre-configured for local-only use (Ollama + local Python). No additional configuration is needed for the core tools. See the sections below for cloud model setup and optional features.
+
+---
+
 ### Prerequisites
 
 - [Bun](https://bun.sh) >= 1.1
 - [uv](https://docs.astral.sh/uv/) (Python package and environment manager)
 - [Ollama](https://ollama.com)
 - [OpenCode](https://opencode.ai)
-- Docker Desktop / Docker Engine
-- Docker Sandbox CLI (`docker sandbox ...` commands available)
+- **Docker Desktop 4.40+** with the **Docker AI Sandbox** feature enabled (required for sandbox tools only)
+  - The `sandbox_*` tools use `docker sandbox` subcommands — a first-party feature in Docker Desktop 4.40+. Enable it under _Settings → Features in Development → Docker AI Sandbox_.
+  - All other tools work without Docker.
+
+> **Sandbox not available?** If you don't have Docker Desktop 4.40+ you can still use all 23 non-sandbox tools. Leave the `medsci-sandbox` MCP server enabled — calls to sandbox tools will return clear errors rather than crashing.
 
 ### 1. Clone and install
 
@@ -232,8 +274,7 @@ bun run setup:py:paperqa
 
 Configured MCP server name: `ace-mcp` (in `opencode.json`)
 
-ACE model default in this repo (test default): `openrouter/free` (set via `ACE_MCP_DEFAULT_MODEL`).
-For production, switch models per shell/session with:
+ACE model default: `openrouter/arcee-ai/trinity-large-preview:free` (set via `ACE_MCP_DEFAULT_MODEL` in `opencode.json`). This is a free OpenRouter model that requires `OPENROUTER_API_KEY`. To change:
 
 ```bash
 export ACE_MCP_DEFAULT_MODEL="your/provider-model"
@@ -264,6 +305,8 @@ Example override:
 export ACE_MCP_DEFAULT_MODEL="anthropic/claude-3-5-sonnet-latest"
 export ANTHROPIC_API_KEY="..."
 ```
+
+> **Key export timing:** API keys must be exported in the shell _before_ starting OpenCode. MCP server processes are spawned at startup and inherit env from that moment — changing env vars afterwards has no effect until OpenCode is restarted.
 
 ### 5. Run tests
 
@@ -351,12 +394,15 @@ Environment variables (set in `opencode.json` under each server's `environment`)
 | `PQA_PREFLIGHT_CACHE_TTL_SECONDS` | `300` | TTL for cached Ollama preflight checks to avoid repeated startup latency |
 | `PQA_SKIP_PREFLIGHT` | `false` | If `true`, skip Ollama model reachability/model-presence preflight checks |
 | `PQA_ENABLE_DOCUMENT_INPUT` | `true` | If `false`, rejects `documents` payloads and only allows identifier-based acquisition |
+| `PQA_LLM_BACKEND` | `ollama` | LLM backend for PaperQA: `ollama` (local), `openrouter`, or `anthropic` (cloud). Cloud backends skip Ollama preflight entirely. |
+| `PQA_CLOUD_MODEL` | _(backend default)_ | Cloud model name in LiteLLM format when `PQA_LLM_BACKEND` is `openrouter` or `anthropic` (e.g. `openrouter/anthropic/claude-3-5-sonnet`, `anthropic/claude-opus-4-5`) |
+| `PQA_QUERY_TIMEOUT_MS` | _(auto-calculated)_ | Direct override for PaperQA total query timeout in milliseconds (caps at 540,000 ms). Overrides the automatic per-paper calculation. |
 
 Acquisition-related environment variables (optional, `server-acquisition`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ACQ_REQUIRE_SCRAPLING` | `true` | If `true`, acquisition sidecar health and HTML extraction fail when Scrapling is unavailable |
+| `ACQ_REQUIRE_SCRAPLING` | `false` | If `true`, acquisition sidecar health check and HTML extraction hard-fail when Scrapling is unavailable. Default `false` enables graceful fallback to BeautifulSoup/regex. |
 | `ACQ_PYTHON` | _unset_ | Optional explicit Python binary for acquisition sidecar (defaults to PaperQA venv path) |
 | `ACQ_CACHE_DIR` | `.opencode/acquired_docs` | Cache location for acquired document payloads |
 | `ACQ_MAX_BYTES_HARD_CAP` | `10000000` | Hard upper bound on response body bytes regardless of per-call options |
@@ -406,18 +452,78 @@ When querying papers via `server-paperqa`, the tool performs a multi-step pipeli
 2. **Indexing** — PaperQA2 indexes the text files and builds a search index in `.opencode/pqa_index/`.
 3. **RAG Synthesis** — The query runs against indexed chunks using Ollama for both summarization and final answer generation.
 
-- **Models**: PaperQA uses `PQA_LLM_MODEL` (default: `ollama/medgemma:latest`) for summarization and answering, and `PQA_EMBEDDING_MODEL` (default: `ollama/mxbai-embed-large`) for document embeddings. Both run locally via Ollama.
+- **Models (local)**: PaperQA uses `PQA_LLM_MODEL` (default: `ollama/medgemma:latest`) for summarization and answering, and `PQA_EMBEDDING_MODEL` (default: `ollama/mxbai-embed-large`) for document embeddings. Both run locally via Ollama.
+- **Models (cloud)**: Set `PQA_LLM_BACKEND=openrouter` or `PQA_LLM_BACKEND=anthropic` to route the LLM calls to a cloud provider instead of Ollama. The embedding model always stays local. Export the corresponding API key before starting OpenCode:
+  ```bash
+  # OpenRouter (supports many models)
+  export PQA_LLM_BACKEND=openrouter
+  export PQA_CLOUD_MODEL="openrouter/anthropic/claude-3-5-sonnet"
+  export OPENROUTER_API_KEY="sk-or-..."
+
+  # Anthropic direct
+  export PQA_LLM_BACKEND=anthropic
+  export PQA_CLOUD_MODEL="anthropic/claude-opus-4-5"
+  export ANTHROPIC_API_KEY="sk-ant-..."
+  ```
+  Cloud backends skip the Ollama LLM preflight check and tend to be significantly faster for synthesis. The acquisition and embedding steps still run locally.
 - **Preflight**: The sidecar verifies Ollama reachability and required model presence before indexing/query. Failures return structured codes (`OLLAMA_UNREACHABLE`, `MODEL_NOT_FOUND`).
 - **Agent Type**: Uses `"fake"` agent mode (deterministic search → gather evidence → answer path) rather than an LLM-driven agent, which reduces token usage.
 - **Paper Limits**: The `search_and_analyze` schema strictly bounds processing to 10 inputs per call (papers or documents) to avoid Out-of-Memory crashes.
 - **Document Provenance Contract**: Pre-acquired documents can include `extraction_backend` (`scrapling`, `beautifulsoup`, `regex`, `pdf_text`, `plain_text`) and `fallback_used` so downstream synthesis can reason about evidence quality explicitly.
 - **PMC Open Access Coverage**: Full-text retrieval requires papers to be in the PMC Open Access subset (~3.5M articles). Papers outside this subset get abstract-only indexing — the response includes an `acquisition_summary` showing which papers were full-text vs abstract-only.
-- **Stage-Gated Responses**: `search_and_analyze` now returns `stage_status` (`acquire`, `index`, `query`) and fail-soft terminal codes (`ACQUIRE_NONE_SUCCESS`, `INDEX_ZERO_SUCCESS`) instead of opaque failures.
+- **Stage-Gated Responses**: `search_and_analyze` now returns `stage_status` (`acquire`, `index`, `query`) and fail-soft terminal codes (`ACQUIRE_NONE_SUCCESS`, `INDEX_ZERO_SUCCESS`, `API_AUTH_FAILED`) instead of opaque failures. `API_AUTH_FAILED` means the cloud LLM API key was missing or rejected — check `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY`.
 - **Embedding Context Guardrail**: Indexing now uses conservative chunk defaults and automatic chunk-size backoff retries when Ollama embedding rejects large inputs (`/api/embed` context-limit errors).
 - **Caching**: Paper acquisition uses canonicalized identifier hashing + manifests. Index/query path includes in-memory docset cache and persisted manifests under `.opencode/pqa_index/manifest.json`.
 - **Stateful Indexes**: Do **not** manually delete `.opencode/pqa_index/` or `.opencode/pqa_papers/` while a PaperQA query is in progress.
 
 ---
+
+## Troubleshooting
+
+### `OLLAMA_UNREACHABLE` — PaperQA or MedGemma fails to connect
+Ollama must be running before OpenCode starts. MCP server processes inherit the environment at startup — run `ollama serve` first, then open OpenCode. Verify with:
+```bash
+curl http://localhost:11434/api/tags
+```
+
+### `MODEL_NOT_FOUND` — Model missing
+Pull the required model:
+```bash
+ollama pull medgemma:latest
+ollama pull mxbai-embed-large
+ollama pull hf.co/matrixportalx/txgemma-2b-predict-GGUF:Q4_K_M
+```
+If `medgemma:latest` resolves but the sidecar still says `MODEL_NOT_FOUND`, the `PQA_LLM_MODEL` env var may reference a different name than what Ollama has. Check with `ollama list`.
+
+### `API_AUTH_FAILED` — Cloud PaperQA authentication error
+The API key for `PQA_LLM_BACKEND` was not found or is invalid. Export it in the shell **before** starting OpenCode:
+```bash
+export OPENROUTER_API_KEY="sk-or-..."   # for PQA_LLM_BACKEND=openrouter
+export ANTHROPIC_API_KEY="sk-ant-..."  # for PQA_LLM_BACKEND=anthropic
+```
+
+### `ACQUIRE_NONE_SUCCESS` — PaperQA couldn't fetch any papers
+The papers may not be in PMC Open Access. PaperQA falls back to abstract-only indexing for papers outside PMC OA (~3.5M articles). If you have access to the full text, use `acquire_documents` first to get pre-acquired `documents`, then pass them directly to `search_and_analyze`.
+
+### Python sidecar tools fail (drug/protein/omics)
+The core Python environment may not be set up:
+```bash
+bun run setup:py:core    # installs RDKit, BioPython, Scanpy into .venv/
+```
+Then verify `MEDSCI_PYTHON` in `opencode.json` points to `.venv/bin/python3`.
+
+### Scrapling warning in acquisition
+If you see `SCRAPLING_REQUIRED` in logs, the acquisition sidecar is running without Scrapling. This is normal — `ACQ_REQUIRE_SCRAPLING=false` (the default) lets it fall back to BeautifulSoup/regex HTML extraction. To enable Scrapling:
+```bash
+bun run setup:py:paperqa   # Scrapling is installed in the PaperQA venv
+```
+And set `MEDSCI_PYTHON` for `medsci-acquisition` in `opencode.json` to `packages/server-paperqa/.venv-paperqa/bin/python3` (it already is by default).
+
+### Sandbox tools fail with `docker: command not found` or connection errors
+The sandbox tools require Docker Desktop 4.40+ with the AI Sandbox feature enabled. If Docker Desktop isn't installed or the daemon isn't running, sandbox calls return errors — all other tools continue to work normally.
+
+### ACE MCP fails to start
+Verify the PaperQA venv is set up (`bun run setup:py:paperqa`) and that `OPENROUTER_API_KEY` is exported before starting OpenCode (ACE uses OpenRouter by default).
 
 ## Project Structure
 

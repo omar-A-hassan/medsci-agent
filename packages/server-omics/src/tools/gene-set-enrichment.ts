@@ -1,4 +1,4 @@
-import { defineTool, interpretWithMedGemma } from "@medsci/core";
+import { defineTool, interpretWithMedGemma, withOptionalSynthesis } from "@medsci/core";
 import { z } from "zod";
 
 export const geneSetEnrichment = defineTool({
@@ -11,6 +11,7 @@ export const geneSetEnrichment = defineTool({
 			.string()
 			.optional()
 			.describe("Gene set library (default: GO_Biological_Process_2023)"),
+		synthesize: z.boolean().optional().describe("Set to false to skip MedGemma synthesis and return raw data"),
 	}),
 	execute: async (input, ctx) => {
 		// Enrichr API — no Python dependency needed, pure HTTP
@@ -64,16 +65,16 @@ export const geneSetEnrichment = defineTool({
 			results,
 		};
 
-		const { interpretation, model_used } = await interpretWithMedGemma(
-			ctx,
-			results.slice(0, 10),
-			`Summarize what these enriched ${library} terms tell us about the underlying biology. ` +
-				"What are the key pathways and processes? Any clinical or therapeutic implications?",
-		);
-
 		return {
 			success: true,
-			data: { ...enrichmentData, interpretation, model_used },
+			data: await withOptionalSynthesis(input.synthesize ?? true, enrichmentData, () =>
+				interpretWithMedGemma(
+					ctx,
+					results.slice(0, 10),
+					`Summarize what these enriched ${library} terms tell us about the underlying biology. ` +
+						"What are the key pathways and processes? Any clinical or therapeutic implications?",
+				),
+			),
 		};
 	},
 });

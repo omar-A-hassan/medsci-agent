@@ -7,7 +7,7 @@ import type {
   AcquisitionLicenseHint,
   AcquisitionSourceType,
 } from "@medsci/core";
-import { defineTool, normalizeDoi } from "@medsci/core";
+import { defineTool, normalizeDoi, Semaphore, HostLimiter } from "@medsci/core";
 import { z } from "zod";
 import {
   AcquisitionError,
@@ -102,7 +102,7 @@ const acquireOptionsSchema = z
     require_scrapling: z
       .boolean()
       .optional()
-      .default(true)
+      .default(false)
       .describe("If true, HTML extraction fails when Scrapling is unavailable"),
     max_concurrency: z
       .number()
@@ -160,58 +160,6 @@ interface NormalizedTargetInput {
   normalized: NormalizedTarget;
 }
 
-class Semaphore {
-  private active = 0;
-
-  private readonly waiters: Array<() => void> = [];
-
-  constructor(private readonly limit: number) {}
-
-  async run<T>(fn: () => Promise<T>): Promise<T> {
-    await this.acquire();
-    try {
-      return await fn();
-    } finally {
-      this.release();
-    }
-  }
-
-  private async acquire(): Promise<void> {
-    if (this.active < this.limit) {
-      this.active += 1;
-      return;
-    }
-
-    await new Promise<void>((resolve) => {
-      this.waiters.push(resolve);
-    });
-
-    this.active += 1;
-  }
-
-  private release(): void {
-    this.active = Math.max(0, this.active - 1);
-    const waiter = this.waiters.shift();
-    if (waiter) waiter();
-  }
-}
-
-class HostLimiter {
-  private readonly semaphores = new Map<string, Semaphore>();
-
-  constructor(private readonly perHostLimit: number) {}
-
-  async runForUrl<T>(rawUrl: string, fn: () => Promise<T>): Promise<T> {
-    const host = new URL(rawUrl).hostname.toLowerCase();
-    let semaphore = this.semaphores.get(host);
-    if (!semaphore) {
-      semaphore = new Semaphore(this.perHostLimit);
-      this.semaphores.set(host, semaphore);
-    }
-    return semaphore.run(fn);
-  }
-}
-
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -234,15 +182,20 @@ function deriveLicenseHint(url: string): AcquisitionLicenseHint {
   return "unknown";
 }
 
+const FULL_TEXT_CHAR_THRESHOLD = 2_500;
+
 function deriveContentLevel(
   text: string,
   opts?: {
     provenanceUrl?: string;
     forcedLevel?: "metadata" | "abstract" | "full_text";
+    retrievalMethod?: string;
   },
 ): "metadata" | "abstract" | "full_text" {
   if (opts?.forcedLevel) return opts.forcedLevel;
   if (!text.trim()) return "metadata";
+  // NCBI BioC always delivers full text (either PMC full text or PubMed abstract + MeSH)
+  if (opts?.retrievalMethod === "ncbi_bioc") return "full_text";
   if (opts?.provenanceUrl) {
     try {
       const host = new URL(opts.provenanceUrl).hostname.toLowerCase();
@@ -252,7 +205,7 @@ function deriveContentLevel(
       // Ignore URL parse failures and fallback to text-length heuristic.
     }
   }
-  if (text.length < 2500) return "abstract";
+  if (text.length < FULL_TEXT_CHAR_THRESHOLD) return "abstract";
   return "full_text";
 }
 
@@ -526,7 +479,7 @@ async function responseToDocument(
       allowed: true,
       blocked: false,
     },
-    content_level: deriveContentLevel(text, { provenanceUrl: finalUrl }),
+    content_level: deriveContentLevel(text, { provenanceUrl: finalUrl, retrievalMethod }),
   };
 }
 
@@ -786,7 +739,11 @@ async function acquireSingleCanonical(input: {
     candidates: input.candidates,
     hostLimiter: input.hostLimiter,
   });
-  if (biocDocument) {
+  // Accept BioC result immediately when we have full text. For abstract-only BioC results,
+  // fall through to the candidate URL loop so Scrapling can attempt the publisher/DOI page
+  // which may have more content (or confirm the paywall). The BioC abstract is kept as a
+  // fallback and used only when all candidate URLs fail.
+  if (biocDocument?.content_level === "full_text") {
     await writeCachedDocument(biocDocument);
     return buildAcquiredResult({
       target: input.targetLabel,
@@ -810,7 +767,12 @@ async function acquireSingleCanonical(input: {
   let lastError: AcquisitionError | null = null;
   let hadNonBlockedAttempt = false;
 
-  for (const candidate of input.candidates) {
+  // Sort by confidence descending so higher-quality sources (PMC > DOI/publisher > PubMed landing)
+  // are tried first. This ensures the DOI → publisher redirect is attempted before the PubMed
+  // landing page, giving Scrapling a chance to reach full text when available.
+  const sortedCandidates = [...input.candidates].sort((a, b) => b.confidence - a.confidence);
+
+  for (const candidate of sortedCandidates) {
     try {
       const fetched = await fetchWithRedirects(candidate.url, {
         maxRedirects: input.options.max_redirects ?? 3,
@@ -834,7 +796,7 @@ async function acquireSingleCanonical(input: {
         input.metadata ?? {},
         {
           maxBytes: effectiveBytes,
-          requireScrapling: input.options.require_scrapling ?? true,
+          requireScrapling: input.options.require_scrapling ?? false,
         },
       );
 
@@ -858,6 +820,17 @@ async function acquireSingleCanonical(input: {
 
       hadNonBlockedAttempt = true;
     }
+  }
+
+  // All candidate URLs failed — fall back to the BioC abstract we got earlier (if any).
+  if (biocDocument) {
+    await writeCachedDocument(biocDocument);
+    return buildAcquiredResult({
+      target: input.targetLabel,
+      normalized: normalizedKey,
+      document: biocDocument,
+      sourceUrl: biocDocument.provenance_url,
+    });
   }
 
   if (!lastError) {
@@ -925,7 +898,7 @@ export const acquireDocuments = defineTool({
       max_redirects: input.options?.max_redirects ?? 3,
       request_timeout_ms: input.options?.request_timeout_ms ?? 20_000,
       prefer_cached: input.options?.prefer_cached ?? true,
-      require_scrapling: input.options?.require_scrapling ?? true,
+      require_scrapling: input.options?.require_scrapling ?? false,
       max_concurrency: input.options?.max_concurrency ?? 6,
       per_host_concurrency: input.options?.per_host_concurrency ?? 2,
       idconv_batch_size: input.options?.idconv_batch_size ?? 40,

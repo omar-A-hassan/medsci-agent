@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { acquisitionSidecar, extractHtmlText } from "../tools/sidecar";
 
 const sidecarScript = join(process.cwd(), "packages/server-acquisition/python/acquisition_sidecar.py");
 const paperqaPythonCandidates = [
@@ -9,6 +10,12 @@ const paperqaPythonCandidates = [
   join(process.cwd(), "packages/server-paperqa/.venv-paperqa/bin/python"),
 ];
 const paperqaPython = paperqaPythonCandidates.find((path) => existsSync(path));
+
+if (!paperqaPython) {
+  console.warn(
+    "Scrapling not installed — HTML extraction quality tests skipped. Install scrapling for full coverage.",
+  );
+}
 
 function runSidecar(
   pythonBin: string,
@@ -109,4 +116,45 @@ describe("acquisition sidecar integration", () => {
       expect(result?.extraction_backend === "regex" || result?.extraction_backend === "beautifulsoup").toBe(true);
     },
   );
+});
+
+describe("extractHtmlText TypeScript fallback chain (no scrapling required)", () => {
+  // This test does NOT require scrapling to be installed.
+  // It mocks the acquisitionSidecar.call at the TypeScript level and verifies
+  // that the extractHtmlText wrapper correctly propagates beautifulsoup fallback
+  // fields when the sidecar reports that beautifulsoup was used.
+
+  const originalCall = acquisitionSidecar.call.bind(acquisitionSidecar);
+  const originalIsRunning = acquisitionSidecar.isRunning.bind(acquisitionSidecar);
+
+  afterEach(() => {
+    acquisitionSidecar.call = originalCall;
+    acquisitionSidecar.isRunning = originalIsRunning;
+    mock.restore();
+  });
+
+  test("propagates extraction_backend=beautifulsoup and fallback_used=true from sidecar response", async () => {
+    acquisitionSidecar.isRunning = mock(() => true);
+    acquisitionSidecar.call = mock(async <T = unknown>(_method: string, _args: unknown) => {
+      return {
+        text: "Extracted body text via BeautifulSoup fallback.",
+        title: "Test Article",
+        extraction_confidence: 0.45,
+        extraction_backend: "beautifulsoup",
+        fallback_used: true,
+      } as unknown as T;
+    }) as any;
+
+    const result = await extractHtmlText(
+      "<html><body><p>Test content</p></body></html>",
+      "https://example.org/article",
+      false,
+    );
+
+    expect(result.extraction_backend).toBe("beautifulsoup");
+    expect(result.fallback_used).toBe(true);
+    expect(result.extraction_confidence).toBe(0.45);
+    expect(result.text).toContain("BeautifulSoup fallback");
+    expect(result.retrieval_method).toBe("scrapling_html");
+  });
 });

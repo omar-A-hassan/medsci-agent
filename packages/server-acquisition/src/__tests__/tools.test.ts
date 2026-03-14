@@ -6,10 +6,13 @@ import { createMockContext } from "@medsci/core/testing";
 import { acquireDocuments } from "../tools/acquire-documents";
 import { resolveIdentifierToSources } from "../tools/resolve-identifier-to-sources";
 import { __testing as acquireTesting } from "../tools/acquire-documents";
+import { acquisitionSidecar } from "../tools/sidecar";
 
 const originalFetch = globalThis.fetch;
 const originalSleep = Bun.sleep;
 const originalCacheDir = process.env.ACQ_CACHE_DIR;
+const originalSidecarCall = acquisitionSidecar.call.bind(acquisitionSidecar);
+const originalSidecarIsRunning = acquisitionSidecar.isRunning.bind(acquisitionSidecar);
 
 let cacheDir = "";
 
@@ -22,6 +25,8 @@ beforeEach(async () => {
 afterEach(async () => {
   globalThis.fetch = originalFetch;
   Bun.sleep = originalSleep;
+  acquisitionSidecar.call = originalSidecarCall;
+  acquisitionSidecar.isRunning = originalSidecarIsRunning;
   mock.restore();
 
   if (originalCacheDir === undefined) {
@@ -172,7 +177,7 @@ describe("acquire_documents", () => {
     expect(result.data?.results[0]?.document?.fallback_used).toBe(false);
   });
 
-  test("uses NCBI BioC first for PMID and skips pubmed page scraping when BioC succeeds", async () => {
+  test("uses NCBI BioC full text via PMCID and skips pubmed page scraping", async () => {
     const seenUrls: string[] = [];
     globalThis.fetch = mock((url: string | URL) => {
       const raw = String(url);
@@ -189,15 +194,16 @@ describe("acquire_documents", () => {
         );
       }
 
-      if (raw.includes("/pubmed.cgi/BioC_json/31452104/unicode")) {
+      // PMCID BioC endpoint — returns full text (forced full_text by tryAcquireViaNcbiBioc)
+      if (raw.includes("/pmcoa.cgi/BioC_json/PMC7159299/unicode")) {
         return Promise.resolve(
           new Response(
             JSON.stringify({
               documents: [
                 {
                   passages: [
-                    { text: "Structured abstract from BioC source." },
-                    { text: "Second abstract paragraph." },
+                    { text: "Full body text from PMC BioC source." },
+                    { text: "Methods and results section." },
                   ],
                 },
               ],
@@ -209,7 +215,7 @@ describe("acquire_documents", () => {
 
       if (raw.includes("pubmed.ncbi.nlm.nih.gov/31452104/")) {
         return Promise.resolve(
-          new Response("Should not be fetched when BioC succeeds", {
+          new Response("Should not be fetched when BioC full text succeeds", {
             status: 200,
             headers: { "content-type": "text/plain" },
           }),
@@ -231,9 +237,62 @@ describe("acquire_documents", () => {
     expect(result.success).toBe(true);
     expect(result.data?.summary.acquired).toBe(1);
     expect(result.data?.results[0]?.document?.retrieval_method).toBe("ncbi_bioc");
-    expect(result.data?.results[0]?.document?.content_level).toBe("abstract");
-    expect(result.data?.results[0]?.document?.text).toContain("Structured abstract from BioC source");
+    expect(result.data?.results[0]?.document?.content_level).toBe("full_text");
+    expect(result.data?.results[0]?.document?.text).toContain("Full body text from PMC BioC source");
+    // PubMed landing page never fetched — full-text BioC returned immediately
     expect(seenUrls.some((u) => u.includes("pubmed.ncbi.nlm.nih.gov/31452104/"))).toBe(false);
+  });
+
+  test("falls through to candidate URLs when BioC returns abstract-only, uses BioC as fallback if all fail", async () => {
+    const seenUrls: string[] = [];
+    globalThis.fetch = mock((url: string | URL) => {
+      const raw = String(url);
+      seenUrls.push(raw);
+
+      if (raw.includes("idconv")) {
+        // No PMCID — only PMID; triggers abstract-only BioC path
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              records: [{ requested_id: "31452104", pmid: "31452104" }],
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+
+      if (raw.includes("/pubmed.cgi/BioC_json/31452104/unicode")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              documents: [{ passages: [{ text: "Abstract-only BioC text." }] }],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+
+      // All candidate URLs fail — simulates paywalled/unavailable publisher
+      return Promise.resolve(new Response("not found", { status: 404 }));
+    }) as unknown as typeof fetch;
+
+    const ctx = createMockContext();
+    const result = await acquireDocuments.execute(
+      {
+        targets: [{ target: "31452104", source_type: "pmid" }],
+        options: { allowlist_tier: "strict", strict_policy: true },
+      },
+      ctx,
+    );
+
+    // Falls back to BioC abstract when all candidates fail
+    expect(result.success).toBe(true);
+    expect(result.data?.summary.acquired).toBe(1);
+    expect(result.data?.results[0]?.document?.retrieval_method).toBe("ncbi_bioc");
+    expect(result.data?.results[0]?.document?.content_level).toBe("abstract");
+    expect(result.data?.results[0]?.document?.text).toContain("Abstract-only BioC text");
+    // Verify the candidate URL WAS attempted before falling back
+    expect(seenUrls.some((u) => u.includes("pubmed.ncbi.nlm.nih.gov/31452104/"))).toBe(true);
   });
 
   test("falls back to Scrapling flow for PMCID when BioC full text is unavailable", async () => {
@@ -542,5 +601,116 @@ describe("acquire_documents", () => {
     );
 
     expect(maxActive).toBeLessThanOrEqual(2);
+  });
+
+  // Edge-case tests (Issue 12A)
+
+  test("redirect loop exceeding max_redirects=2 fails the document but tool succeeds", async () => {
+    // Every fetch call returns a 302 redirect back to the same URL, creating
+    // an infinite loop that is bounded by max_redirects=2.
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(null, {
+          status: 302,
+          headers: { location: "https://pmc.ncbi.nlm.nih.gov/articles/PMC9999999/" },
+        }),
+      ),
+    ) as unknown as typeof fetch;
+
+    const ctx = createMockContext();
+    const result = await acquireDocuments.execute(
+      {
+        targets: [
+          {
+            target: "https://pmc.ncbi.nlm.nih.gov/articles/PMC9999999/",
+            source_type: "url",
+          },
+        ],
+        options: { allowlist_tier: "strict", strict_policy: true, max_redirects: 2 },
+      },
+      ctx,
+    );
+
+    // The tool itself must succeed — it wraps per-document errors
+    expect(result.success).toBe(true);
+    // The individual document result must report failure
+    expect(result.data?.results[0].status).toBe("failed");
+    expect(result.data?.results[0].error_code).toBe("TOO_MANY_REDIRECTS");
+    expect(result.data?.results[0].retryable).toBe(true);
+    expect(result.data?.summary.acquired).toBe(0);
+    expect(result.data?.summary.failed).toBe(1);
+  });
+
+  test("deriveContentLevel returns metadata for empty text", () => {
+    // The content_level='metadata' sentinel is produced by deriveContentLevel
+    // when the text is empty (before the extraction-failed guard).
+    // This tests the __testing helper directly since the full acquisition
+    // pipeline always throws EXTRACTION_FAILED before persisting empty text.
+    expect(acquireTesting.deriveContentLevel("")).toBe("metadata");
+    expect(acquireTesting.deriveContentLevel("   \n  ")).toBe("metadata");
+
+    // Short but non-empty text (<2500 chars) yields 'abstract'
+    expect(acquireTesting.deriveContentLevel("Short abstract text.")).toBe("abstract");
+
+    // Long text (>=2500 chars) yields 'full_text'
+    expect(acquireTesting.deriveContentLevel("A".repeat(2500))).toBe("full_text");
+  });
+
+  test("extraction_backend beautifulsoup fallback is propagated into the AcquiredDocument", async () => {
+    // Mock fetch to return an HTML response so the sidecar extraction path is reached.
+    globalThis.fetch = mock((url: string | URL) => {
+      const raw = String(url);
+      if (raw.includes("idconv")) {
+        return Promise.resolve(new Response(JSON.stringify({ records: [] }), { status: 200 }));
+      }
+      return Promise.resolve(
+        new Response(
+          "<html><body><p>Article body text that is long enough for full_text classification.</p></body></html>",
+          {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8" },
+          },
+        ),
+      );
+    }) as unknown as typeof fetch;
+
+    // Mock the acquisition sidecar to simulate a beautifulsoup fallback response.
+    acquisitionSidecar.isRunning = mock(() => true);
+    acquisitionSidecar.call = mock(async <T = unknown>(_method: string, _args: unknown) => {
+      return {
+        text: "Article body text that is long enough for full_text classification.",
+        title: "Test Article via BeautifulSoup",
+        extraction_confidence: 0.45,
+        extraction_backend: "beautifulsoup",
+        fallback_used: true,
+      } as unknown as T;
+    }) as any;
+
+    const ctx = createMockContext();
+    const result = await acquireDocuments.execute(
+      {
+        targets: [
+          {
+            target: "https://pmc.ncbi.nlm.nih.gov/articles/PMC8888888/",
+            source_type: "url",
+          },
+        ],
+        options: {
+          allowlist_tier: "strict",
+          strict_policy: true,
+          require_scrapling: false,
+        },
+      },
+      ctx,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.data?.results[0].status).toBe("acquired");
+    const doc = result.data?.results[0].document;
+    expect(doc?.extraction_backend).toBe("beautifulsoup");
+    expect(doc?.fallback_used).toBe(true);
+    // BeautifulSoup confidence is 0.45, which is below 0.5
+    expect(doc?.extraction_confidence).toBeLessThan(0.5);
+    expect(doc?.extraction_confidence).toBe(0.45);
   });
 });

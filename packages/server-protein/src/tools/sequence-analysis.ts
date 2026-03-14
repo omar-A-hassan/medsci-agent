@@ -1,4 +1,4 @@
-import { defineTool, interpretWithMedGemma } from "@medsci/core";
+import { defineTool, interpretWithMedGemma, withOptionalSynthesis } from "@medsci/core";
 import { z } from "zod";
 
 export const sequenceAnalysis = defineTool({
@@ -18,6 +18,7 @@ export const sequenceAnalysis = defineTool({
 			.boolean()
 			.optional()
 			.describe("If DNA/RNA, translate to protein (default: false)"),
+		synthesize: z.boolean().optional().describe("Set to false to skip MedGemma synthesis and return raw data"),
 	}),
 	execute: async (input, ctx) => {
 		const seqType = input.seq_type ?? "protein";
@@ -43,17 +44,17 @@ export const sequenceAnalysis = defineTool({
 
 		const seqData = { ...stats, translation };
 
-		const { interpretation, model_used } = await interpretWithMedGemma(
-			ctx,
-			seqData,
-			`Analyze this ${seqType} sequence (${stats.length} residues). ` +
-				"What can the amino acid composition and molecular weight tell us about this protein's properties, " +
-				"localization, or function?",
-		);
-
 		return {
 			success: true,
-			data: { ...seqData, interpretation, model_used },
+			data: await withOptionalSynthesis(input.synthesize ?? true, seqData, () =>
+				interpretWithMedGemma(
+					ctx,
+					seqData,
+					`Analyze this ${seqType} sequence (${stats.length} residues). ` +
+						"What can the amino acid composition and molecular weight tell us about this protein's properties, " +
+						"localization, or function?",
+				),
+			),
 		};
 	},
 });

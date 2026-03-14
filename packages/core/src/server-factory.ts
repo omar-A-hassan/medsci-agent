@@ -55,9 +55,22 @@ export async function createMcpServer(opts: {
 		version: opts.version,
 	});
 
+	// Unwrap ZodEffects (from .superRefine/.refine/.transform) to reach the underlying
+	// ZodObject. Without this, schemas wrapped by these operators have no .shape, causing
+	// the MCP SDK to register the tool with an empty parameter schema. Zod's default
+	// strip mode then removes all incoming args, producing "field: Required" errors.
+	function unwrapZodShape(s: any): Record<string, any> {
+		if (s && "shape" in s) return s.shape;
+		const inner = s?._def?.innerType ?? s?._def?.schema;
+		return inner ? unwrapZodShape(inner) : {};
+	}
+
 	// Register each tool — pass the raw Zod .shape so McpServer gets real Zod types
 	for (const tool of opts.tools) {
-		const zodShape = "shape" in tool.schema ? (tool.schema as any).shape : {};
+		const zodShape = unwrapZodShape(tool.schema);
+		if (Object.keys(zodShape).length === 0) {
+			log.warn(`[${tool.name}] schema has no .shape — parameters will not be exposed to MCP callers`);
+		}
 
 		server.tool(tool.name, tool.description, zodShape, async (args: any) => {
 			const result = await tool.execute(args as any, ctx);

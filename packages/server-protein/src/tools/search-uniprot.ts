@@ -1,4 +1,4 @@
-import { defineTool, interpretWithMedGemma } from "@medsci/core";
+import { defineTool, interpretWithMedGemma, withOptionalSynthesis } from "@medsci/core";
 import { z } from "zod";
 
 const UNIPROT_BASE = "https://rest.uniprot.org/uniprotkb";
@@ -25,6 +25,7 @@ export const searchUniprot = defineTool({
 			.max(25)
 			.optional()
 			.describe("Max results (default: 10)"),
+		synthesize: z.boolean().optional().describe("Set to false to skip MedGemma synthesis and return raw data"),
 	}),
 	execute: async (input, ctx) => {
 		const limit = input.limit ?? 10;
@@ -62,16 +63,16 @@ export const searchUniprot = defineTool({
 			results,
 		};
 
-		const { interpretation, model_used } = await interpretWithMedGemma(
-			ctx,
-			results,
-			`Summarize the functions and clinical relevance of these proteins found for "${input.query}". ` +
-				"Highlight any disease associations or therapeutic targets.",
-		);
-
 		return {
 			success: true,
-			data: { ...uniprotData, interpretation, model_used },
+			data: await withOptionalSynthesis(input.synthesize ?? true, uniprotData, () =>
+				interpretWithMedGemma(
+					ctx,
+					results,
+					`Summarize the functions and clinical relevance of these proteins found for "${input.query}". ` +
+						"Highlight any disease associations or therapeutic targets.",
+				),
+			),
 		};
 	},
 });

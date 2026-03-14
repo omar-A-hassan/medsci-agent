@@ -56,6 +56,7 @@ EC_TEXT_TOO_LARGE = "TEXT_TOO_LARGE"
 EC_NEGATIVE_CACHE_HIT = "NEGATIVE_CACHE_HIT"
 EC_UNHANDLED_ERROR = "UNHANDLED_ERROR"
 EC_UNKNOWN_METHOD = "UNKNOWN_METHOD"
+EC_API_AUTH_FAILED = "API_AUTH_FAILED"
 
 
 class SidecarEnvelopeError(Exception):
@@ -315,6 +316,10 @@ class PaperQaRuntimeConfig:
     docset_cache_max_entries: int
     docset_cache_max_bytes: int
     preflight_cache_ttl_seconds: int
+    # Cloud model support (Issue 1A)
+    llm_backend: str  # "ollama" | "openrouter" | "anthropic" | "litellm"
+    cloud_model: str
+    cloud_api_key: str
 
     @classmethod
     def from_env(cls) -> "PaperQaRuntimeConfig":
@@ -342,13 +347,21 @@ class PaperQaRuntimeConfig:
             preflight_cache_ttl_seconds=_parse_env_int(
                 "PQA_PREFLIGHT_CACHE_TTL_SECONDS", 300, min_value=0
             ),
+            llm_backend=os.environ.get("PQA_LLM_BACKEND", "ollama"),
+            cloud_model=os.environ.get(
+                "PQA_CLOUD_MODEL", "openrouter/anthropic/claude-sonnet-4-5"
+            ),
+            cloud_api_key=(
+                os.environ.get("OPENROUTER_API_KEY", "")
+                or os.environ.get("ANTHROPIC_API_KEY", "")
+            ),
         )
 
 
 def build_settings(workspace_dir: str, cfg: PaperQaRuntimeConfig):
     """
-    Build a PaperQA2 Settings object configured for local Ollama inference
-    with proper index and cache placement.
+    Build a PaperQA2 Settings object for local Ollama or cloud LLM inference.
+    Set PQA_LLM_BACKEND=openrouter|anthropic to use cloud models.
     """
     from paperqa import Settings
 
@@ -358,52 +371,98 @@ def build_settings(workspace_dir: str, cfg: PaperQaRuntimeConfig):
     index_dir = os.path.join(workspace_dir, ".opencode", "pqa_index")
     os.makedirs(index_dir, exist_ok=True)
 
-    ollama_config = {
-        "model_list": [
-            {
-                "model_name": cfg.ollama_model,
-                "litellm_params": {
-                    "model": cfg.ollama_model,
-                    "api_base": cfg.ollama_base,
-                    "timeout": cfg.llm_timeout_seconds,
-                },
-            }
-        ]
-    }
-
-    embedding_config = {
-        "kwargs": {
-            "api_base": cfg.ollama_base,
+    shared_agent_index = {
+        "agent_type": "fake",
+        "index": {
+            "paper_directory": paper_dir,
+            "index_directory": index_dir,
         },
     }
+    shared_parsing = {
+        "use_doc_details": cfg.use_doc_details,
+        "reader_config": {
+            "chunk_chars": cfg.chunk_chars,
+            "overlap": min(cfg.chunk_overlap, max(0, cfg.chunk_chars - 1)),
+        },
+    }
+    shared_answer = {
+        "answer_max_sources": cfg.answer_max_sources,
+        "evidence_k": cfg.evidence_k,
+    }
 
-    settings = Settings(
-        llm=cfg.ollama_model,
-        llm_config=ollama_config,
-        summary_llm=cfg.ollama_model,
-        summary_llm_config=ollama_config,
-        embedding=cfg.embedding_model,
-        embedding_config=embedding_config,
-        temperature=0.1,
-        parsing={
-            "use_doc_details": cfg.use_doc_details,
-            "reader_config": {
-                "chunk_chars": cfg.chunk_chars,
-                "overlap": min(cfg.chunk_overlap, max(0, cfg.chunk_chars - 1)),
-            },
-        },
-        agent={
-            "agent_type": "fake",
-            "index": {
-                "paper_directory": paper_dir,
-                "index_directory": index_dir,
-            },
-        },
-        answer={
-            "answer_max_sources": cfg.answer_max_sources,
-            "evidence_k": cfg.evidence_k,
-        },
-    )
+    if cfg.llm_backend != "ollama":
+        # Cloud model path — validate API key first
+        if not cfg.cloud_api_key:
+            raise SidecarEnvelopeError(
+                code=EC_DEPENDENCY_MISSING,
+                message=(
+                    f"PQA_LLM_BACKEND={cfg.llm_backend} requires an API key. "
+                    "Set OPENROUTER_API_KEY or ANTHROPIC_API_KEY."
+                ),
+                stage="startup",
+                retryable=False,
+            )
+
+        cloud_llm_config = {
+            "model_list": [
+                {
+                    "model_name": cfg.cloud_model,
+                    "litellm_params": {
+                        "model": cfg.cloud_model,
+                        "api_key": cfg.cloud_api_key,
+                        "timeout": cfg.llm_timeout_seconds,
+                    },
+                }
+            ]
+        }
+
+        # Embeddings stay local (Ollama) by default to avoid cloud cost/latency for embeddings.
+        # Users can override PQA_EMBEDDING_MODEL to a cloud model if desired.
+        embedding_config_kwargs: Dict[str, Any] = {}
+        if cfg.embedding_model.startswith("ollama/"):
+            embedding_config_kwargs = {"api_base": cfg.ollama_base}
+
+        settings = Settings(
+            llm=cfg.cloud_model,
+            llm_config=cloud_llm_config,
+            summary_llm=cfg.cloud_model,
+            summary_llm_config=cloud_llm_config,
+            embedding=cfg.embedding_model,
+            embedding_config={"kwargs": embedding_config_kwargs} if embedding_config_kwargs else {},
+            temperature=0.1,
+            parsing=shared_parsing,
+            agent=shared_agent_index,
+            answer=shared_answer,
+        )
+        logger.info("Using cloud LLM backend: %s (model: %s)", cfg.llm_backend, cfg.cloud_model)
+    else:
+        # Local Ollama path (default)
+        ollama_config = {
+            "model_list": [
+                {
+                    "model_name": cfg.ollama_model,
+                    "litellm_params": {
+                        "model": cfg.ollama_model,
+                        "api_base": cfg.ollama_base,
+                        "timeout": cfg.llm_timeout_seconds,
+                    },
+                }
+            ]
+        }
+        embedding_config = {"kwargs": {"api_base": cfg.ollama_base}}
+
+        settings = Settings(
+            llm=cfg.ollama_model,
+            llm_config=ollama_config,
+            summary_llm=cfg.ollama_model,
+            summary_llm_config=ollama_config,
+            embedding=cfg.embedding_model,
+            embedding_config=embedding_config,
+            temperature=0.1,
+            parsing=shared_parsing,
+            agent=shared_agent_index,
+            answer=shared_answer,
+        )
 
     return settings, paper_dir, index_dir
 
@@ -734,10 +793,15 @@ async def preflight_models(settings, ollama_base: str, ttl_seconds: int = 300) -
             out.add(base[: -len(":latest")])
         return out
 
-    required = [
-        _normalize_model_name(settings.llm),
-        _normalize_model_name(settings.embedding),
-    ]
+    # Only check models that are actually routed through Ollama (prefix "ollama/").
+    # Cloud model names (e.g. "openrouter/anthropic/...") must not be checked against
+    # Ollama's model list — they are resolved by LiteLLM, not Ollama.
+    ollama_models = [m for m in [settings.llm, settings.embedding] if m.startswith("ollama/")]
+    required = [_normalize_model_name(m) for m in ollama_models]
+
+    if not required:
+        # Nothing to check against Ollama — skip.
+        return
 
     missing = []
     for req in required:
@@ -1165,6 +1229,12 @@ def _classify_query_error(exc: Exception) -> Tuple[str, str, bool]:
             EC_QUERY_RATE_LIMIT,
             "LLM endpoint returned a rate-limit response. Retry after a short delay.",
             True,
+        )
+    if "401" in lowered or "authentication" in lowered or "api_key" in lowered or "unauthorized" in lowered:
+        return (
+            EC_API_AUTH_FAILED,
+            "API authentication failed. Check OPENROUTER_API_KEY or ANTHROPIC_API_KEY environment variable.",
+            False,
         )
     return (
         EC_QUERY_FAILED,
@@ -1714,7 +1784,27 @@ def _error_response(
     return payload
 
 
+def _log_cache_warmup_status(workspace_dir: str) -> None:
+    """Log how many previously indexed docsets are on disk (informational on restart)."""
+    index_manifest_path = os.path.join(workspace_dir, ".opencode", "pqa_index", "manifest.json")
+    if not os.path.exists(index_manifest_path):
+        return
+    try:
+        with open(index_manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+        entries = manifest.get("entries", {})
+        if entries:
+            logger.info(
+                "PaperQA restart: %d previously indexed docset(s) in manifest. "
+                "Paper text files in pqa_papers/ are cached; re-indexing needed for new queries.",
+                len(entries),
+            )
+    except Exception as exc:
+        logger.warning("Could not read index manifest on startup: %s", exc)
+
+
 def main():
+    _log_cache_warmup_status(os.getcwd())
     for line in sys.stdin:
         if not line.strip():
             continue

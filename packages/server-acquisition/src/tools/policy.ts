@@ -1,6 +1,9 @@
 import { lookup } from "node:dns/promises";
+import type { LookupAddress } from "node:dns";
 import { isIP } from "node:net";
 import type { AcquisitionPolicyDecision } from "@medsci/core";
+
+type DnsLookupAll = (hostname: string, options: { all: true; verbatim?: boolean }) => Promise<LookupAddress[]>;
 
 export type AllowlistTier = "strict" | "extended" | "open";
 
@@ -25,6 +28,7 @@ const STRICT_ALLOWLIST = [
 
 const EXTENDED_ALLOWLIST = [
 	...STRICT_ALLOWLIST,
+	// High-impact journals (mixed OA/paywalled)
 	"nature.com",
 	"www.nature.com",
 	"science.org",
@@ -39,10 +43,29 @@ const EXTENDED_ALLOWLIST = [
 	"www.bmj.com",
 	"cell.com",
 	"www.cell.com",
+	// Fully open-access publishers
 	"plos.org",
 	"www.plos.org",
 	"frontiersin.org",
 	"www.frontiersin.org",
+	"mdpi.com",
+	"www.mdpi.com",
+	"biomedcentral.com",
+	"www.biomedcentral.com",
+	"peerj.com",
+	"www.peerj.com",
+	"hindawi.com",
+	"www.hindawi.com",
+	// Major publishers with many OA articles (DOI redirects land here)
+	"onlinelibrary.wiley.com",
+	"link.springer.com",
+	"springer.com",
+	"academic.oup.com",
+	"tandfonline.com",
+	"www.tandfonline.com",
+	"sciencedirect.com",
+	"www.sciencedirect.com",
+	"linkinghub.elsevier.com",
 ];
 
 const ALLOWLISTS: Record<AllowlistTier, string[]> = {
@@ -199,7 +222,7 @@ export async function evaluateUrlPolicyWithDns(
 		allowlistTier: AllowlistTier;
 		allowedPorts: number[];
 	},
-	resolveHost: typeof lookup = lookup,
+	resolveHost: DnsLookupAll = lookup,
 ): Promise<AcquisitionPolicyDecision> {
 	const basePolicy = evaluateUrlPolicy(rawUrl, opts);
 	if (basePolicy.blocked) return basePolicy;

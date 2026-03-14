@@ -10,9 +10,11 @@ export const pqaSidecar = new PythonSidecar({
   timeoutMs: 150_000,
 });
 
+const COLD_START_RESERVE_MS = 20_000;
+
 const PAPERQA_ERROR_MAP: Record<string, string> = {
   OLLAMA_UNREACHABLE:
-    "Failed to connect to the local inference server (Ollama). Check if it is running.",
+    "Failed to connect to the local model server (Ollama). Check if it is running.",
   MODEL_NOT_FOUND:
     "Configured local model was not found in Ollama. Pull the model or update PQA_LLM_MODEL/PQA_EMBEDDING_MODEL.",
   EMBEDDING_BAD_REQUEST:
@@ -27,12 +29,19 @@ const PAPERQA_ERROR_MAP: Record<string, string> = {
     "LLM endpoint rate-limited the request. Wait a moment and retry.",
   INVALID_DOCUMENT_INPUT:
     "One or more provided documents are invalid. Ensure each document has source_id, provenance_url, and non-empty text.",
+  API_AUTH_FAILED:
+    "API authentication failed. Check OPENROUTER_API_KEY or ANTHROPIC_API_KEY environment variable.",
 };
 
 export function computeTimeoutMs(itemCount: number): number {
+  // Direct override — useful for cloud model paths which may be faster or slower than local Ollama
+  const directOverrideMs = Number(process.env.PQA_QUERY_TIMEOUT_MS);
+  if (directOverrideMs > 0) return Math.min(540_000, directOverrideMs);
+
   const baseMs = Math.min(420_000, 120_000 + Math.max(0, itemCount) * 30_000);
+  // *2 passes per paper: one for indexing (embedding), one for query (LLM generation)
   const llmTimeoutSec = Number(process.env.PQA_LLM_TIMEOUT_SECONDS) || 180;
-  const llmBudgetMs = (llmTimeoutSec + 45) * 1000;
+  const llmBudgetMs = (llmTimeoutSec + 45) * 1000; // +45s embedding overhead
   return Math.min(540_000, Math.max(baseMs, llmBudgetMs));
 }
 
@@ -127,24 +136,19 @@ export const searchAndAnalyzeTool = defineTool({
         .optional()
         .default([])
         .describe("Pre-acquired documents. If provided, PaperQA skips internal acquisition."),
-    })
-    .superRefine((value, issue) => {
-      if ((value.documents?.length ?? 0) === 0 && (value.papers?.length ?? 0) === 0) {
-        issue.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Provide at least one paper identifier or one acquired document.",
-          path: ["papers"],
-        });
-      }
     }),
   execute: async (input) => {
     try {
       const documentCount = input.documents?.length ?? 0;
       const paperCount = input.papers?.length ?? 0;
+      if (documentCount === 0 && paperCount === 0) {
+        return { success: false, error: "Provide at least one paper identifier or one acquired document." };
+      }
       const itemCount =
         documentCount > 0 ? documentCount : paperCount;
 
-      pqaSidecar.setTimeoutMs(computeTimeoutMs(itemCount));
+      const coldStartReserve = pqaSidecar.isRunning() ? 0 : COLD_START_RESERVE_MS;
+      pqaSidecar.setTimeoutMs(computeTimeoutMs(itemCount) + coldStartReserve);
 
       if (!pqaSidecar.isRunning()) {
         await pqaSidecar.start();

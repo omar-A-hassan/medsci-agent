@@ -1,4 +1,4 @@
-import { defineTool, interpretWithMedGemma } from "@medsci/core";
+import { defineTool, interpretWithMedGemma, withOptionalSynthesis } from "@medsci/core";
 import { z } from "zod";
 
 const ALPHAFOLD_BASE = "https://alphafold.ebi.ac.uk/api";
@@ -12,6 +12,7 @@ export const predictStructure = defineTool({
 			.string()
 			.min(1)
 			.describe("UniProt accession (e.g. 'P69905' for human hemoglobin alpha)"),
+		synthesize: z.boolean().optional().describe("Set to false to skip MedGemma synthesis and return raw data"),
 	}),
 	execute: async (input, ctx) => {
 		const url = `${ALPHAFOLD_BASE}/prediction/${input.uniprot_id}`;
@@ -50,22 +51,22 @@ export const predictStructure = defineTool({
 			mean_plddt: pred.globalMetricValue,
 		};
 
-		const { interpretation, model_used } = await interpretWithMedGemma(
-			ctx,
-			{
-				gene: structureData.gene,
-				organism: structureData.organism,
-				mean_plddt: structureData.mean_plddt,
-				sequence_length: structureData.sequence_length,
-			},
-			`Assess this AlphaFold structure prediction for ${input.uniprot_id}. ` +
-				"Comment on pLDDT confidence quality, suitability for structure-based drug design, " +
-				"and any caveats about predicted vs. experimental structures.",
-		);
-
 		return {
 			success: true,
-			data: { ...structureData, interpretation, model_used },
+			data: await withOptionalSynthesis(input.synthesize ?? true, structureData, () =>
+				interpretWithMedGemma(
+					ctx,
+					{
+						gene: structureData.gene,
+						organism: structureData.organism,
+						mean_plddt: structureData.mean_plddt,
+						sequence_length: structureData.sequence_length,
+					},
+					`Assess this AlphaFold structure prediction for ${input.uniprot_id}. ` +
+						"Comment on pLDDT confidence quality, suitability for structure-based drug design, " +
+						"and any caveats about predicted vs. experimental structures.",
+				),
+			),
 		};
 	},
 });

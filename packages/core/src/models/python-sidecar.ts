@@ -33,6 +33,9 @@ export class PythonSidecar implements PythonSidecarInterface {
 	private scriptPath: string;
 	private pythonBin: string;
 	private preloadLibs: string[];
+	private startPromise: Promise<void> | null = null;
+	private restartCount = 0;
+	private readonly MAX_RESTARTS = 3;
 
 	constructor(opts?: PythonSidecarOptions) {
 		const resolved = resolvePythonSidecarOptions(opts, DEFAULT_TIMEOUT_MS);
@@ -52,7 +55,14 @@ export class PythonSidecar implements PythonSidecarInterface {
 
 	async start(): Promise<void> {
 		if (this.isRunning()) return;
+		if (this.startPromise !== null) return this.startPromise;
+		this.startPromise = this._doStart().finally(() => {
+			this.startPromise = null;
+		});
+		return this.startPromise;
+	}
 
+	private async _doStart(): Promise<void> {
 		this.proc = spawn(this.pythonBin, [this.scriptPath], {
 			stdio: ["pipe", "pipe", "pipe"],
 			env: {
@@ -62,8 +72,10 @@ export class PythonSidecar implements PythonSidecarInterface {
 		});
 
 		(this.proc as any).on("exit", (code: number | null) => {
-			this.log.warn(`sidecar exited with code ${code}`);
-			// Reject all pending requests
+			this.restartCount += 1;
+			this.log.warn(
+				`sidecar exited with code ${code} (restart count: ${this.restartCount})`,
+			);
 			for (const [id, { reject }] of this.pending) {
 				reject(new Error(`Sidecar exited (code ${code}) while awaiting ${id}`));
 			}
@@ -77,7 +89,6 @@ export class PythonSidecar implements PythonSidecarInterface {
 			if (msg) this.log.warn(`stderr: ${msg}`);
 		});
 
-		// Read line-delimited JSON responses from stdout
 		this.rl = createInterface({ input: this.proc.stdout! });
 		(this.rl as any).on("line", (line: string) => {
 			try {
@@ -98,8 +109,8 @@ export class PythonSidecar implements PythonSidecarInterface {
 			}
 		});
 
-		// Wait for health check
 		await this.call("__health__", {});
+		this.restartCount = 0;
 		this.log.info("sidecar started and healthy");
 	}
 
@@ -107,7 +118,7 @@ export class PythonSidecar implements PythonSidecarInterface {
 		method: string,
 		args: Record<string, unknown>,
 	): Promise<T> {
-		const attemptCall = async (isRetry = false): Promise<T> => {
+		const attemptCall = async (): Promise<T> => {
 			if (!this.isRunning() && method !== "__health__") {
 				await this.start();
 			}
@@ -150,8 +161,15 @@ export class PythonSidecar implements PythonSidecarInterface {
 			return await attemptCall();
 		} catch (err) {
 			if (!this.isRunning() && method !== "__health__") {
-				this.log.warn(`Sidecar crashed during ${method}. Retrying once...`);
-				return await attemptCall(true);
+				if (this.restartCount >= this.MAX_RESTARTS) {
+					throw new Error(
+						`Sidecar has crashed ${this.restartCount} times and is circuit-broken. Restart the MCP server.`,
+					);
+				}
+				this.log.warn(
+					`Sidecar crashed during ${method} (restart count: ${this.restartCount}). Retrying once...`,
+				);
+				return await attemptCall();
 			}
 			throw err;
 		}

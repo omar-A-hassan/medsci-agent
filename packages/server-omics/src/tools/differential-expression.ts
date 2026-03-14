@@ -1,4 +1,4 @@
-import { defineTool, interpretWithMedGemma } from "@medsci/core";
+import { defineTool, interpretWithMedGemma, withOptionalSynthesis } from "@medsci/core";
 import { z } from "zod";
 
 export const differentialExpression = defineTool({
@@ -21,6 +21,7 @@ export const differentialExpression = defineTool({
 			.positive()
 			.optional()
 			.describe("Number of top genes per group (default: 50)"),
+		synthesize: z.boolean().optional().describe("Set to false to skip MedGemma synthesis and return raw data"),
 	}),
 	execute: async (input, ctx) => {
 		let data;
@@ -45,14 +46,17 @@ export const differentialExpression = defineTool({
 			return { success: false, error: String(err) };
 		}
 
-		const { interpretation, model_used } = await interpretWithMedGemma(
-			ctx,
-			data.top_genes,
-			`Interpret these differentially expressed genes grouped by "${input.groupby}". ` +
-				"What biological processes, cell types, or pathways do the top markers suggest? " +
-				"Flag any known disease associations.",
-		);
-
-		return { success: true, data: { ...data, interpretation, model_used } };
+		return {
+			success: true,
+			data: await withOptionalSynthesis(input.synthesize ?? true, data, () =>
+				interpretWithMedGemma(
+					ctx,
+					data.top_genes,
+					`Interpret these differentially expressed genes grouped by "${input.groupby}". ` +
+						"What biological processes, cell types, or pathways do the top markers suggest? " +
+						"Flag any known disease associations.",
+				),
+			),
+		};
 	},
 });

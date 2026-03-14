@@ -45,6 +45,40 @@ describe("computeTimeoutMs (timeout hierarchy)", () => {
 			}
 		}
 	});
+
+	test("PQA_QUERY_TIMEOUT_MS direct override takes precedence", () => {
+		const origVal = process.env.PQA_QUERY_TIMEOUT_MS;
+		try {
+			process.env.PQA_QUERY_TIMEOUT_MS = "30000";
+			expect(computeTimeoutMs(1)).toBe(30_000);
+		} finally {
+			if (origVal === undefined) delete process.env.PQA_QUERY_TIMEOUT_MS;
+			else process.env.PQA_QUERY_TIMEOUT_MS = origVal;
+		}
+	});
+
+	test("PQA_QUERY_TIMEOUT_MS is capped at 540s", () => {
+		const origVal = process.env.PQA_QUERY_TIMEOUT_MS;
+		try {
+			process.env.PQA_QUERY_TIMEOUT_MS = "600000";
+			expect(computeTimeoutMs(1)).toBe(540_000);
+		} finally {
+			if (origVal === undefined) delete process.env.PQA_QUERY_TIMEOUT_MS;
+			else process.env.PQA_QUERY_TIMEOUT_MS = origVal;
+		}
+	});
+
+	test("PQA_QUERY_TIMEOUT_MS=0 falls through to normal logic", () => {
+		const origVal = process.env.PQA_QUERY_TIMEOUT_MS;
+		try {
+			process.env.PQA_QUERY_TIMEOUT_MS = "0";
+			// Normal path: 1 paper → 225s
+			expect(computeTimeoutMs(1)).toBe(225_000);
+		} finally {
+			if (origVal === undefined) delete process.env.PQA_QUERY_TIMEOUT_MS;
+			else process.env.PQA_QUERY_TIMEOUT_MS = origVal;
+		}
+	});
 });
 
 describe("search_and_analyze (IPC Serialization & Schema Boundaries)", () => {
@@ -140,10 +174,46 @@ describe("search_and_analyze (IPC Serialization & Schema Boundaries)", () => {
 		expect(pqaSidecar.call).toHaveBeenCalledTimes(1);
 	});
 
-	test("rejects missing papers and documents", () => {
-		const input = { query: "Test", papers: [], documents: [] };
-		const result = searchAndAnalyzeTool.schema.safeParse(input);
+	test("rejects empty papers and documents at execute time", async () => {
+		pqaSidecar.isRunning = mock(() => true);
+		const ctx = createMockContext();
+		const result = await searchAndAnalyzeTool.execute(
+			{ query: "Test", papers: [], documents: [] },
+			ctx,
+		);
 		expect(result.success).toBe(false);
+		expect(result.error).toContain("at least one");
+	});
+
+	test("schema exposes .shape for MCP registration (no ZodEffects wrapper)", () => {
+		expect("shape" in searchAndAnalyzeTool.schema).toBe(true);
+		const shape = (searchAndAnalyzeTool.schema as any).shape;
+		expect(shape).toHaveProperty("query");
+		expect(shape).toHaveProperty("papers");
+		expect(shape).toHaveProperty("documents");
+	});
+
+	test("translates API_AUTH_FAILED to agent-safe instruction", async () => {
+		pqaSidecar.isRunning = mock(() => true);
+		pqaSidecar.start = mock(() => Promise.resolve());
+		const err = new Error("api auth failed");
+		(err as any).sidecar = {
+			error_code: "API_AUTH_FAILED",
+			error_message: "API authentication failed",
+			error_stage: "startup",
+			retryable: false,
+		};
+		pqaSidecar.call = mock(() => Promise.reject(err));
+
+		const input = { query: "Test", papers: [{ identifier: "10.1234/test" }] };
+		const ctx = createMockContext();
+		const result = await searchAndAnalyzeTool.execute(input, ctx);
+
+		expect(result.success).toBe(false);
+		const errorLower = (result.error ?? "").toLowerCase();
+		expect(
+			errorLower.includes("api key") || errorLower.includes("authentication"),
+		).toBe(true);
 	});
 
 	test("translates ACQUIRE_NONE_SUCCESS to agent-safe instruction", async () => {
@@ -367,5 +437,99 @@ describe("search_and_analyze (IPC Serialization & Schema Boundaries)", () => {
 		expect(result.success).toBe(true);
 		expect(result.data?.answer).toContain("gene editing tool");
 		expect(pqaSidecar.call).toHaveBeenCalledTimes(1);
+	});
+
+	// TDD: Cloud model path tests (Issue 9A)
+	// These tests specify intended behavior for the PQA_LLM_BACKEND=openrouter cloud path.
+	// The Python sidecar validates the API key — the TypeScript layer maps the sidecar
+	// error code DEPENDENCY_MISSING to a user-facing failure with an authentication message.
+
+	test("[TDD] PQA_LLM_BACKEND=openrouter without API key returns success=false with auth error", async () => {
+		pqaSidecar.isRunning = mock(() => true);
+		pqaSidecar.start = mock(() => Promise.resolve());
+
+		// Simulate Python sidecar rejecting due to missing OpenRouter API key.
+		const err = new Error("openrouter api key missing");
+		(err as any).sidecar = {
+			error_code: "DEPENDENCY_MISSING",
+			error_message:
+				"PQA_LLM_BACKEND=openrouter requires an API key. Set OPENROUTER_API_KEY.",
+			error_stage: "startup",
+			retryable: false,
+		};
+		pqaSidecar.call = mock(() => Promise.reject(err));
+
+		const origBackend = process.env.PQA_LLM_BACKEND;
+		try {
+			process.env.PQA_LLM_BACKEND = "openrouter";
+
+			const ctx = createMockContext();
+			const result = await searchAndAnalyzeTool.execute(
+				{
+					query: "CRISPR therapeutic applications",
+					papers: [{ identifier: "10.1234/crispr" }],
+				},
+				ctx,
+			);
+
+			expect(result.success).toBe(false);
+			// The error message must mention API key or authentication so the
+			// agent knows what remediation is required.
+			const errorLower = (result.error ?? "").toLowerCase();
+			expect(
+				errorLower.includes("api key") || errorLower.includes("authentication"),
+			).toBe(true);
+		} finally {
+			if (origBackend === undefined) {
+				delete process.env.PQA_LLM_BACKEND;
+			} else {
+				process.env.PQA_LLM_BACKEND = origBackend;
+			}
+		}
+	});
+
+	test("[TDD] PQA_LLM_BACKEND=ollama (default) calls sidecar normally", async () => {
+		pqaSidecar.isRunning = mock(() => true);
+		pqaSidecar.start = mock(() => Promise.resolve());
+
+		pqaSidecar.call = mock(async <T = unknown>(method: string, _data: any) => {
+			expect(method).toBe("analyze_papers");
+			return {
+				answer: "Ollama answered the query.",
+				references: [],
+				context: "",
+				stage_status: {
+					acquire: "success",
+					index: "success",
+					query: "success",
+				},
+				warnings: [],
+			} as unknown as T;
+		}) as any;
+
+		const origBackend = process.env.PQA_LLM_BACKEND;
+		try {
+			// Ollama is the default — ensure existing behavior is preserved.
+			process.env.PQA_LLM_BACKEND = "ollama";
+
+			const ctx = createMockContext();
+			const result = await searchAndAnalyzeTool.execute(
+				{
+					query: "KRAS mutation mechanisms",
+					papers: [{ identifier: "36856617" }],
+				},
+				ctx,
+			);
+
+			expect(result.success).toBe(true);
+			expect(pqaSidecar.call).toHaveBeenCalledTimes(1);
+			expect(result.data?.answer).toContain("Ollama answered");
+		} finally {
+			if (origBackend === undefined) {
+				delete process.env.PQA_LLM_BACKEND;
+			} else {
+				process.env.PQA_LLM_BACKEND = origBackend;
+			}
+		}
 	});
 });

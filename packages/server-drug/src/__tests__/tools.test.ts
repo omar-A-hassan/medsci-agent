@@ -80,6 +80,25 @@ describe("analyze_molecule", () => {
 			smiles: "C",
 		});
 	});
+
+	test("synthesize: false skips Ollama and returns model_used=false", async () => {
+		const ctx = createMockContext({
+			pythonResponse: {
+				valid: true,
+				canonical_smiles: "CC(=O)OC1=CC=CC=C1C(=O)O",
+				molecular_weight: 180.16,
+				logp: 1.31,
+			},
+		});
+		const result = await analyzeMolecule.execute(
+			{ smiles: "CC(=O)OC1=CC=CC=C1C(=O)O", synthesize: false },
+			ctx,
+		);
+		expect(result.success).toBe(true);
+		expect(result.data?.model_used).toBe(false);
+		expect(result.data?.interpretation).toBe("");
+		expect(ctx.ollama.generate).not.toHaveBeenCalled();
+	});
 });
 
 describe("lipinski_filter", () => {

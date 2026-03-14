@@ -174,7 +174,7 @@ def _handle_extract_html(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _health_status() -> Dict[str, Any]:
-    require_scrapling = _env_truthy("ACQ_REQUIRE_SCRAPLING", True)
+    require_scrapling = _env_truthy("ACQ_REQUIRE_SCRAPLING", False)
     scrapling, scrapling_version = _load_scrapling()
     has_scrapling = scrapling is not None
     has_bs4 = BeautifulSoup is not None

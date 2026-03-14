@@ -1,4 +1,4 @@
-import { defineTool, interpretWithMedGemma } from "@medsci/core";
+import { defineTool, interpretWithMedGemma, withOptionalSynthesis } from "@medsci/core";
 import { z } from "zod";
 
 export const TXGEMMA_MODEL =
@@ -138,6 +138,7 @@ export const predictAdmet = defineTool({
 		"Predict ADMET (Absorption, Distribution, Metabolism, Excretion, Toxicity) properties for a molecule. Returns AI-predicted risk assessments for key safety endpoints including BBB penetration, intestinal absorption, hERG inhibition, CYP3A4 inhibition, Ames mutagenicity, and DILI risk.",
 	schema: z.object({
 		smiles: z.string().min(1).describe("SMILES string of the molecule"),
+		synthesize: z.boolean().optional().describe("Set to false to skip MedGemma synthesis and return raw data"),
 	}),
 	execute: async (input, ctx) => {
 		// Step 1: Get molecular properties from RDKit
@@ -224,25 +225,21 @@ export const predictAdmet = defineTool({
 		}
 
 		// Step 4: MedGemma interpretation of combined results
-		const { interpretation, model_used: medgemma_used } =
-			await interpretWithMedGemma(
+		const rawData = { smiles: input.smiles, physicochemical: props, admet };
+		const synthesized = await withOptionalSynthesis(input.synthesize ?? true, rawData, () =>
+			interpretWithMedGemma(
 				ctx,
-				{ smiles: input.smiles, physicochemical: props, admet },
+				rawData,
 				"Synthesize these ADMET predictions for clinical relevance. " +
 					"Comment on the overall safety profile, key risks (hERG, DILI, mutagenicity), " +
 					"and suitability for oral administration (absorption, BBB). " +
 					"Note any endpoints predicted as 'unknown' that need experimental validation.",
-			);
+			),
+		);
 
 		return {
 			success: true,
-			data: {
-				smiles: input.smiles,
-				physicochemical: props,
-				admet,
-				interpretation,
-				model_used: txgemma_used || medgemma_used,
-			},
+			data: { ...synthesized, model_used: txgemma_used || synthesized.model_used },
 		};
 	},
 });

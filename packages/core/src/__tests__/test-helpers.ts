@@ -39,5 +39,5 @@ export function createMockContext(overrides?: {
 			warn: mock(() => {}),
 			error: mock(() => {}),
 		},
-	};
+	} satisfies ToolContext;
 }

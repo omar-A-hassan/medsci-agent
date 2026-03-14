@@ -125,3 +125,58 @@ function anySignal(signals: AbortSignal[]): AbortSignal {
 
 	return controller.signal;
 }
+
+/**
+ * Limits the number of concurrent async operations.
+ */
+export class Semaphore {
+	private active = 0;
+	private readonly waiters: Array<() => void> = [];
+
+	constructor(private readonly limit: number) {}
+
+	async run<T>(fn: () => Promise<T>): Promise<T> {
+		await this.acquire();
+		try {
+			return await fn();
+		} finally {
+			this.release();
+		}
+	}
+
+	private async acquire(): Promise<void> {
+		if (this.active < this.limit) {
+			this.active += 1;
+			return;
+		}
+		await new Promise<void>((resolve) => {
+			this.waiters.push(resolve);
+		});
+		this.active += 1;
+	}
+
+	private release(): void {
+		this.active = Math.max(0, this.active - 1);
+		const waiter = this.waiters.shift();
+		if (waiter) waiter();
+	}
+}
+
+/**
+ * Per-host concurrency limiter backed by per-hostname Semaphores.
+ */
+export class HostLimiter {
+	private readonly semaphores = new Map<string, Semaphore>();
+
+	constructor(private readonly perHostLimit: number) {}
+
+	async runForUrl<T>(rawUrl: string, fn: () => Promise<T>): Promise<T> {
+		const host = new URL(rawUrl).hostname.toLowerCase();
+		let semaphore = this.semaphores.get(host);
+		if (!semaphore) {
+			semaphore = new Semaphore(this.perHostLimit);
+			this.semaphores.set(host, semaphore);
+		}
+		return semaphore.run(fn);
+	}
+}

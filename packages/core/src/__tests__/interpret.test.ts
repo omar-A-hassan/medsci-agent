@@ -119,4 +119,39 @@ describe("interpretWithMedGemma", () => {
 		// "To reiterate:" separator should be present
 		expect(capturedPrompt).toContain("To reiterate:");
 	});
+
+	test("instruction appears before data AND after data (Leviathan et al. 2025 ordering)", async () => {
+		// Spy variant: verifies the structural ordering of the three prompt sections.
+		// The pattern is: <instruction> ... Data: <data> ... To reiterate: <instruction>
+		let capturedPrompt = "";
+		const instruction = "Interpret these pathway genes.";
+		const dataPayload = { pathway: "MAPK", genes: ["KRAS", "BRAF"] };
+
+		const ctx = createMockContext();
+		(ctx.ollama.generate as any).mockImplementation((prompt: string) => {
+			capturedPrompt = prompt;
+			return Promise.resolve("ok");
+		});
+
+		await interpretWithMedGemma(ctx, dataPayload, instruction);
+
+		expect(ctx.ollama.generate).toHaveBeenCalledTimes(1);
+
+		// 1. Instruction text appears exactly twice
+		const firstOccurrence = capturedPrompt.indexOf(instruction);
+		const secondOccurrence = capturedPrompt.lastIndexOf(instruction);
+		expect(firstOccurrence).not.toBe(-1);
+		expect(secondOccurrence).toBeGreaterThan(firstOccurrence);
+
+		// 2. The data content sits between the two occurrences of the instruction
+		const dataStr = JSON.stringify(dataPayload, null, 2);
+		const dataIdx = capturedPrompt.indexOf(dataStr);
+		expect(dataIdx).toBeGreaterThan(firstOccurrence);
+		expect(dataIdx).toBeLessThan(secondOccurrence);
+
+		// 3. Second occurrence follows the "To reiterate:" separator
+		const reiterateIdx = capturedPrompt.indexOf("To reiterate:");
+		expect(reiterateIdx).toBeGreaterThan(dataIdx);
+		expect(secondOccurrence).toBeGreaterThan(reiterateIdx);
+	});
 });

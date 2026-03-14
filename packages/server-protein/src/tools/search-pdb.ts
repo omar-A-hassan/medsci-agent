@@ -1,4 +1,4 @@
-import { defineTool, interpretWithMedGemma } from "@medsci/core";
+import { defineTool, interpretWithMedGemma, withOptionalSynthesis } from "@medsci/core";
 import { z } from "zod";
 
 const PDB_SEARCH_URL = "https://search.rcsb.org/rcsbsearch/v2/query";
@@ -16,6 +16,7 @@ const schema = z.object({
 		.max(25)
 		.optional()
 		.describe("Max results (default: 10)"),
+	synthesize: z.boolean().optional().describe("Set to false to skip MedGemma synthesis and return raw data"),
 });
 
 interface PdbResultItem {
@@ -72,15 +73,17 @@ export const searchPdb = defineTool<z.infer<typeof schema>, SearchPdbOutput>({
 					},
 				];
 
-				const { interpretation, model_used } = await interpretWithMedGemma(
-					ctx,
-					directResult,
-					`Describe the structural significance of PDB entry ${pdbId}. Comment on resolution quality, experimental method, and potential for structure-based drug design.`,
-				);
-
 				return {
 					success: true,
-					data: { results: directResult, interpretation, model_used },
+					data: await withOptionalSynthesis(
+						input.synthesize ?? true,
+						{ results: directResult },
+						() => interpretWithMedGemma(
+							ctx,
+							directResult,
+							`Describe the structural significance of PDB entry ${pdbId}. Comment on resolution quality, experimental method, and potential for structure-based drug design.`,
+						),
+					),
 				};
 			}
 		}
@@ -140,15 +143,15 @@ export const searchPdb = defineTool<z.infer<typeof schema>, SearchPdbOutput>({
 
 		const pdbData = { query: input.query, n_results: results.length, results };
 
-		const { interpretation, model_used } = await interpretWithMedGemma(
-			ctx,
-			results,
-			`Assess the structural data for "${input.query}". Comment on resolution quality, experimental methods, and druggability of the structures found.`,
-		);
-
 		return {
 			success: true,
-			data: { ...pdbData, interpretation, model_used },
+			data: await withOptionalSynthesis(input.synthesize ?? true, pdbData, () =>
+				interpretWithMedGemma(
+					ctx,
+					results,
+					`Assess the structural data for "${input.query}". Comment on resolution quality, experimental methods, and druggability of the structures found.`,
+				),
+			),
 		};
 	},
 });
